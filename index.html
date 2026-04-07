@@ -1026,7 +1026,18 @@ function fakeC(n){
   });
 }
 
-function fmtP(n){return n.toLocaleString('en-US',{minimumFractionDigits:1,maximumFractionDigits:1});}
+function fmtP(n){
+  if(!n || isNaN(n)) return '—';
+  // Умное форматирование: количество знаков зависит от величины цены
+  if(n >= 10000)  return n.toLocaleString('en-US',{minimumFractionDigits:1,maximumFractionDigits:1});
+  if(n >= 1000)   return n.toLocaleString('en-US',{minimumFractionDigits:1,maximumFractionDigits:1});
+  if(n >= 100)    return n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  if(n >= 10)     return n.toLocaleString('en-US',{minimumFractionDigits:3,maximumFractionDigits:3});
+  if(n >= 1)      return n.toLocaleString('en-US',{minimumFractionDigits:4,maximumFractionDigits:4});
+  if(n >= 0.1)    return n.toLocaleString('en-US',{minimumFractionDigits:4,maximumFractionDigits:5});
+  if(n >= 0.01)   return n.toLocaleString('en-US',{minimumFractionDigits:5,maximumFractionDigits:6});
+  return n.toLocaleString('en-US',{minimumFractionDigits:6,maximumFractionDigits:8});
+}
 function fmtN(n,d=2){return n.toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});}
 
 function updTopbar(p,ch,h,l,v){
@@ -1232,6 +1243,7 @@ function drawChart(){
   }
 
   drawLevelsOnChart();
+  drawOBHeatmap(); // Heatmap крупных ордеров
 
   if(showStop && CM._stopZones?.length){
     CM._stopZones.forEach(z=>{
@@ -1471,6 +1483,69 @@ const REST_PROXY = 'https://ws-proxy-a98539046-jpg8022-4kr8t0op.leapcell.dev/api
 // Флаг чтобы не запускать несколько fetchOB параллельно
 let _obFetching = false;
 
+// ─── ИСТОРИЯ СТАКАНА для Heatmap ─────────────────────────────────────────────
+// Накапливаем снимки стакана каждую секунду
+// Структура: { price, qty, time, sym }
+const OB_HISTORY_MAX = 120; // храним 120 секунд истории
+let obHistory = []; // массив снимков { time, asks:[], bids:[] }
+let bigWalls = []; // крупные стены { price, qty, side, firstSeen, lastSeen, disappeared }
+
+function updateOBHistory(asks, bids, sym){
+  if(sym !== curSym) return;
+  const now = Date.now();
+
+  // Добавляем снимок
+  obHistory.push({ time: now, asks: [...asks], bids: [...bids] });
+  if(obHistory.length > OB_HISTORY_MAX) obHistory.shift();
+
+  // Средний объём для определения крупных ордеров
+  const allQty = [...asks, ...bids].map(r=>r[1]);
+  if(!allQty.length) return;
+  const avgQty = allQty.reduce((s,v)=>s+v,0) / allQty.length;
+  const bigThreshold = avgQty * 4; // крупная стена = 4x среднего
+
+  // Ищем крупные стены в текущем стакане
+  const currentBig = new Map();
+  [...asks.map(r=>({...r, side:'ask'})), ...bids.map(r=>({...r, side:'bid'}))]
+    .filter(r => r[1] >= bigThreshold)
+    .forEach(r => {
+      const key = Math.round(r[0] * 100) / 100; // округляем до 2 знаков
+      currentBig.set(key, { price: r[0], qty: r[1], side: r.side });
+    });
+
+  // Обновляем bigWalls
+  const prevKeys = new Set(bigWalls.filter(w=>!w.disappeared).map(w=>Math.round(w.price*100)/100));
+  const currKeys = new Set(currentBig.keys());
+
+  // Новые крупные стены
+  currentBig.forEach((wall, key) => {
+    const existing = bigWalls.find(w => Math.round(w.price*100)/100 === key && !w.disappeared);
+    if(existing){
+      existing.qty = wall.qty;
+      existing.lastSeen = now;
+    } else {
+      bigWalls.push({ price: wall.price, qty: wall.qty, side: wall.side,
+        firstSeen: now, lastSeen: now, disappeared: false, sym });
+    }
+  });
+
+  // Исчезнувшие крупные стены (стоп сработал или убрали)
+  bigWalls.forEach(w => {
+    if(w.disappeared || w.sym !== curSym) return;
+    const key = Math.round(w.price*100)/100;
+    if(!currKeys.has(key)){
+      w.disappeared = true;
+      w.disappearedAt = now;
+    }
+  });
+
+  // Удаляем старые исчезнувшие (старше 5 минут)
+  bigWalls = bigWalls.filter(w => {
+    if(w.disappeared && (now - w.disappearedAt) > 300000) return false;
+    return true;
+  });
+}
+
 async function fetchOB(){
   if(_obFetching) return;
   _obFetching = true;
@@ -1498,6 +1573,11 @@ async function fetchOB(){
   if(sym !== curSym){ _obFetching=false; return; }
   if(spotData){ ST.spot.asks=spotData.asks; ST.spot.bids=spotData.bids; }
   if(futData){  ST.fut.asks=futData.asks;   ST.fut.bids=futData.bids; }
+
+  // ✅ Накапливаем историю для heatmap
+  const activeData = mkt==='spot' ? spotData : futData;
+  if(activeData) updateOBHistory(activeData.asks, activeData.bids, sym);
+
   if(spotData || futData) updOB();
   _obFetching = false;
 }
@@ -1554,6 +1634,17 @@ function setTf(el,t){
 }
 
 function setTool(tool,el){
+  // ✅ Повторное нажатие ▲/▼ отменяет инструмент
+  if((tool==='long'||tool==='short') && activeTool===tool){
+    activeTool='cursor';
+    liqMapZones=[];
+    document.querySelectorAll('.tool-btn').forEach(b=>b.classList.remove('active'));
+    document.getElementById('tCursor').classList.add('active');
+    document.getElementById('toolLbl').textContent='Курсор';
+    drawChart();
+    return;
+  }
+
   activeTool=tool; drawStart=null; brushPts=[]; isDrawing=false;
   const oc=document.getElementById('overlayC');
   if(oc){const octx=oc.getContext('2d');octx.clearRect(0,0,oc.width,oc.height);}
@@ -1563,7 +1654,8 @@ function setTool(tool,el){
     cursor:'Курсор',trend:'╱ Линия тренда — 1-й клик: начало, 2-й: конец',
     hray:'⟶ Горизонтальный луч — кликни на уровне',fib:'Ψ Фибоначчи — 1-й клик: начало, 2-й: конец',
     rect:'▭ Стоп-зона — 1-й клик: верх, 2-й: низ',ruler:'↔ Линейка — 1-й клик: начало, 2-й: конец',
-    long:'▲ Лонг — кликни на уровне входа',short:'▼ Шорт — кликни на уровне входа',
+    long:'▲ Лонг — кликни на уровне входа  (повторное нажатие = отмена)',
+    short:'▼ Шорт — кликни на уровне входа  (повторное нажатие = отмена)',
     path:'〜 Траектория — кликай точки, двойной клик = завершить',
     forecast:'◈ Прогноз — кликни для цели',brush:'✏ Кисть — зажми и рисуй',arrow:'➜ Стрелка — 1-й клик: хвост, 2-й: остриё',
   };
@@ -1679,6 +1771,7 @@ function setSym(sym,label){
   curP=0; visOffset=0; visCount=120;
   positionDrawings=[]; liqMapZones=[];
   computedLevels=[]; liqLevels=[];
+  obHistory=[]; bigWalls=[]; // сбрасываем историю стакана
   ['tbPrice','tbChange','tbHigh','tbLow','tbVol'].forEach(id=>{
     const el=document.getElementById(id); if(el) el.textContent='—';
   });
@@ -2387,6 +2480,67 @@ function chartToScreenY(pt){
   return CM.toY(pt.price);
 }
 
+// ─── HEATMAP КРУПНЫХ ОРДЕРОВ ─────────────────────────────────────────────────
+function drawOBHeatmap(){
+  if(!CM.rng || !showLiq) return;
+  if(!bigWalls.length) return;
+  const {pad,W,cW,toY,cH} = CM;
+  const now = Date.now();
+
+  bigWalls.filter(w => w.sym === curSym).forEach(w => {
+    const y = toY(w.price);
+    if(y < pad.t - 5 || y > pad.t + cH + 5) return;
+
+    ctx.save();
+
+    if(!w.disappeared){
+      // ✅ АКТИВНАЯ крупная стена — горизонтальная линия с объёмом
+      const isAsk = w.side === 'ask';
+      const col = isAsk ? 'rgba(255,80,80,0.9)' : 'rgba(80,200,120,0.9)';
+      const bgCol = isAsk ? 'rgba(255,80,80,0.12)' : 'rgba(80,200,120,0.12)';
+
+      // Полоска на уровне ордера
+      ctx.fillStyle = bgCol;
+      ctx.fillRect(pad.l, y-1, cW, 3);
+
+      // Линия
+      ctx.strokeStyle = col;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3,3]);
+      ctx.beginPath(); ctx.moveTo(pad.l,y); ctx.lineTo(W-pad.r,y); ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Метка объёма
+      ctx.font = 'bold 8px JetBrains Mono,monospace';
+      ctx.fillStyle = col;
+      ctx.textAlign = 'left';
+      const volStr = w.qty > 1000 ? (w.qty/1000).toFixed(1)+'K' : w.qty.toFixed(1);
+      const label = (isAsk ? '🔴 ' : '🟢 ') + fmtP(w.price) + '  ' + volStr;
+      ctx.fillText(label, pad.l + 4, y - 3);
+
+    } else {
+      // ✅ ИСЧЕЗНУВШАЯ стена — была крупным ордером, исчез = вероятно стоп сработал
+      const age = (now - w.disappearedAt) / 1000; // секунд назад
+      if(age > 300) return; // показываем только 5 минут
+
+      const alpha = Math.max(0.1, 0.8 - age/300);
+      ctx.strokeStyle = `rgba(255,200,50,${alpha})`;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([8,4]);
+      ctx.beginPath(); ctx.moveTo(pad.l,y); ctx.lineTo(W-pad.r,y); ctx.stroke();
+      ctx.setLineDash([]);
+
+      ctx.font = 'bold 8px JetBrains Mono,monospace';
+      ctx.fillStyle = `rgba(255,200,50,${alpha})`;
+      ctx.textAlign = 'left';
+      const secsAgo = age < 60 ? Math.round(age)+'с' : Math.round(age/60)+'м';
+      ctx.fillText('⚡ ' + fmtP(w.price) + '  стоп? (' + secsAgo + ')', pad.l+4, y-3);
+    }
+
+    ctx.restore();
+  });
+}
+
 function drawUserObjects(){
   if(!CM||!CM.rng) return;
   ctx.save();
@@ -2573,47 +2727,20 @@ function drawPositions(){
     const GREEN   = 'rgba(0,200,150,';
     const RED     = 'rgba(255,68,102,';
     const entryCol= isLong ? '#00c896' : '#ff4466';
-    const liqH = Math.max(16, Math.abs(toY(pos.entry) - toY(pos.entry * 1.008)));
+
     ctx.save();
-    {
-      const y1=clamp(Math.min(yEntry,yTP)), y2=clamp(Math.max(yEntry,yTP));
-      const h=Math.max(2,y2-y1);
-      ctx.fillStyle=isLong?'rgba(0,200,150,0.10)':'rgba(255,68,102,0.10)';
-      ctx.fillRect(pad.l,y1,cW,h);
-    }
-    {
-      const y1=clamp(Math.min(yEntry,ySL)), y2=clamp(Math.max(yEntry,ySL));
-      const h=Math.max(2,y2-y1);
-      ctx.fillStyle=isLong?'rgba(255,68,102,0.10)':'rgba(0,200,150,0.10)';
-      ctx.fillRect(pad.l,y1,cW,h);
-    }
-    const drawLiqRect=(price, above)=>{
-      const yL = toY(price);
-      if(yL<pad.t-liqH||yL>pad.t+cH+liqH) return;
-      const ry = clamp(above ? yL-liqH : yL);
-      const rh = Math.max(10, Math.min(liqH, pad.t+cH-ry));
-      if(rh<6) return;
-      ctx.fillStyle='rgba(120,80,210,0.22)';
-      ctx.fillRect(pad.l,ry,cW,rh);
-      ctx.strokeStyle='rgba(160,110,250,1)'; ctx.lineWidth=1;
-      ctx.beginPath();
-      ctx.moveTo(pad.l,ry);    ctx.lineTo(pad.l+cW,ry);
-      ctx.moveTo(pad.l,ry+rh); ctx.lineTo(pad.l+cW,ry+rh);
-      ctx.stroke();
-      ctx.font='bold 9px JetBrains Mono,monospace';
-      ctx.fillStyle='rgba(180,140,255,1)'; ctx.textAlign='right';
-      ctx.fillText(fmtP(price), pad.l+cW-4, ry+rh/2+3);
-    };
-    drawLiqRect(pos.tp, isLong);
-    drawLiqRect(pos.sl, !isLong);
+
+    // ✅ ТОЛЬКО ТРИ ЛИНИИ — никаких заливок и прямоугольников
     const line=(y,col,lw,dash=[])=>{
       ctx.strokeStyle=col; ctx.lineWidth=lw; ctx.setLineDash(dash);
       ctx.beginPath(); ctx.moveTo(pad.l,clamp(y)); ctx.lineTo(W-pad.r,clamp(y)); ctx.stroke();
       ctx.setLineDash([]);
     };
-    line(yEntry, entryCol,  1.5);
-    line(yTP,    '#00c896', 1, [6,3]);
-    line(ySL,    '#ff4466', 1, [6,3]);
+    line(yTP,    '#00c896', 1.5, [6,3]); // TP — зелёная пунктирная
+    line(yEntry, entryCol,  1.5);         // ENT — сплошная
+    line(ySL,    '#ff4466', 1.5, [6,3]); // SL — красная пунктирная
+
+    // Бейджи с ценой и П/У
     const pct    = +(document.getElementById('posSizePct')?.value||10)/100;
     const avail  = 12450;
     const margin = avail * pct;
@@ -2622,6 +2749,7 @@ function drawPositions(){
     const pTP    = ((pos.tp-pos.entry)*qty*dir);
     const pSL    = ((pos.sl-pos.entry)*qty*dir);
     const rr     = Math.abs((pos.tp-pos.entry)/(pos.sl-pos.entry||1));
+
     const badge=(rawY, label, price, bg, pnl)=>{
       const y=clamp(rawY);
       const pnlStr = pnl!==undefined ? '  '+(pnl>=0?'+':'')+fmtN(pnl)+'U' : '';
@@ -2642,6 +2770,8 @@ function drawPositions(){
     badge(yTP,    'TP',  pos.tp,    GREEN+'0.9)', pTP);
     badge(yEntry, 'ENT', pos.entry, entryCol+'bb', undefined);
     badge(ySL,    'SL',  pos.sl,    RED+'0.9)',   pSL);
+
+    // Кнопка × удалить
     const delX=pad.l+4, delY=clamp(yEntry)-7;
     ctx.fillStyle='rgba(22,26,34,.95)';
     ctx.fillRect(delX,delY,16,13);
