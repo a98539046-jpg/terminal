@@ -1502,7 +1502,7 @@ function updateOBHistory(asks, bids, sym){
   const allQty = [...asks, ...bids].map(r=>r[1]);
   if(!allQty.length) return;
   const avgQty = allQty.reduce((s,v)=>s+v,0) / allQty.length;
-  const bigThreshold = avgQty * 4; // крупная стена = 4x среднего
+  const bigThreshold = avgQty * 15; // ✅ только ОЧЕНЬ крупные = 15x среднего
 
   // Ищем крупные стены в текущем стакане
   const currentBig = new Map();
@@ -2360,54 +2360,56 @@ function drawOBHeatmap(){
   const {pad,W,cW,toY,cH} = CM;
   const now = Date.now();
 
-  bigWalls.filter(w => w.sym === curSym).forEach(w => {
+  // Показываем только топ-5 активных стен по объёму
+  const activeWalls = bigWalls
+    .filter(w => w.sym===curSym && !w.disappeared)
+    .sort((a,b) => b.qty - a.qty)
+    .slice(0, 5);
+
+  // И топ-3 исчезнувших (самые свежие)
+  const disappearedWalls = bigWalls
+    .filter(w => w.sym===curSym && w.disappeared && (now-w.disappearedAt) < 120000)
+    .sort((a,b) => b.disappearedAt - a.disappearedAt)
+    .slice(0, 3);
+
+  [...activeWalls, ...disappearedWalls].forEach(w => {
     const y = toY(w.price);
     if(y < pad.t - 5 || y > pad.t + cH + 5) return;
 
     ctx.save();
 
     if(!w.disappeared){
-      // ✅ АКТИВНАЯ крупная стена — горизонтальная линия с объёмом
+      // Активная крупная стена
       const isAsk = w.side === 'ask';
-      const col = isAsk ? 'rgba(255,80,80,0.9)' : 'rgba(80,200,120,0.9)';
-      const bgCol = isAsk ? 'rgba(255,80,80,0.12)' : 'rgba(80,200,120,0.12)';
+      const col = isAsk ? 'rgba(255,100,100,0.85)' : 'rgba(80,210,130,0.85)';
 
-      // Полоска на уровне ордера
-      ctx.fillStyle = bgCol;
-      ctx.fillRect(pad.l, y-1, cW, 3);
-
-      // Линия
       ctx.strokeStyle = col;
-      ctx.lineWidth = 1;
-      ctx.setLineDash([3,3]);
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([5,4]);
       ctx.beginPath(); ctx.moveTo(pad.l,y); ctx.lineTo(W-pad.r,y); ctx.stroke();
       ctx.setLineDash([]);
 
-      // Метка объёма
+      // Метка справа
       ctx.font = 'bold 8px JetBrains Mono,monospace';
       ctx.fillStyle = col;
-      ctx.textAlign = 'left';
-      const volStr = w.qty > 1000 ? (w.qty/1000).toFixed(1)+'K' : w.qty.toFixed(1);
-      const label = (isAsk ? '🔴 ' : '🟢 ') + fmtP(w.price) + '  ' + volStr;
-      ctx.fillText(label, pad.l + 4, y - 3);
+      ctx.textAlign = 'right';
+      const volStr = w.qty > 1000 ? (w.qty/1000).toFixed(1)+'K' : w.qty.toFixed(0);
+      ctx.fillText((isAsk ? '🔴 ' : '🟢 ') + volStr, W-pad.r-4, y-2);
 
     } else {
-      // ✅ ИСЧЕЗНУВШАЯ стена — была крупным ордером, исчез = вероятно стоп сработал
-      const age = (now - w.disappearedAt) / 1000; // секунд назад
-      if(age > 300) return; // показываем только 5 минут
-
-      const alpha = Math.max(0.1, 0.8 - age/300);
-      ctx.strokeStyle = `rgba(255,200,50,${alpha})`;
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([8,4]);
+      // Исчезнувшая стена — стоп сработал?
+      const age = (now - w.disappearedAt) / 1000;
+      const alpha = Math.max(0.2, 0.7 - age/120);
+      ctx.strokeStyle = `rgba(255,210,50,${alpha})`;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([6,5]);
       ctx.beginPath(); ctx.moveTo(pad.l,y); ctx.lineTo(W-pad.r,y); ctx.stroke();
       ctx.setLineDash([]);
 
-      ctx.font = 'bold 8px JetBrains Mono,monospace';
-      ctx.fillStyle = `rgba(255,200,50,${alpha})`;
-      ctx.textAlign = 'left';
-      const secsAgo = age < 60 ? Math.round(age)+'с' : Math.round(age/60)+'м';
-      ctx.fillText('⚡ ' + fmtP(w.price) + '  стоп? (' + secsAgo + ')', pad.l+4, y-3);
+      ctx.font = '8px JetBrains Mono,monospace';
+      ctx.fillStyle = `rgba(255,210,50,${alpha})`;
+      ctx.textAlign = 'right';
+      ctx.fillText('⚡ стоп?', W-pad.r-4, y-2);
     }
 
     ctx.restore();
