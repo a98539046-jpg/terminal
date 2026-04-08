@@ -621,7 +621,7 @@ const TF_MS  = {'1m':6e4,'5m':3e5,'15m':9e5,'30m':18e5,'1h':36e5,'4h':144e5,'1d'
 let ws=null, wsTimer=null, wsOk=false;
 let ws2=null, ws2Timer=null;
 
-const PROXY_BASE = 'wss://ws-proxy-a98539046-jpg8022-4kr8t0op.ws-proxy-production-32b7.up.railway.app';
+const PROXY_BASE = 'wss://ws-proxy-production-32b7.ws-proxy-production-32b7.up.railway.app';
 
 function getProxyUrl(market){
   const custom = window.WS_PROXY_URL || localStorage.getItem('ws_proxy_url');
@@ -1478,7 +1478,7 @@ function updOB(){
   document.getElementById('fMidS').textContent=symShort+' · Перп';
 }
 
-const REST_PROXY = 'https://ws-proxy-a98539046-jpg8022-4kr8t0op.ws-proxy-production-32b7.up.railway.app/api?url=';
+const REST_PROXY = 'https://ws-proxy-production-32b7.ws-proxy-production-32b7.up.railway.app/api?url=';
 
 // Флаг чтобы не запускать несколько fetchOB параллельно
 let _obFetching = false;
