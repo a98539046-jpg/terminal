@@ -1275,7 +1275,7 @@ function _drawOB(){
   const fBids = ST.fut.bids.length ? ST.fut.bids : (st.bids.length ? st.bids : fakeOB(p,'bid'));
 
   // Если данные не изменились — не перерисовываем DOM
-  const hash = (asks[0]?.[0]||0).toFixed(1)+'|'+(bids[0]?.[0]||0).toFixed(1)+'|'+(fAsks[0]?.[0]||0).toFixed(1)+'|'+p.toFixed(1);
+  const hash = (asks[0]?.[0]||0).toFixed(5)+'|'+(bids[0]?.[0]||0).toFixed(5)+'|'+(fAsks[0]?.[0]||0).toFixed(5)+'|'+p.toFixed(5);
   if(hash === _obHash) return;
   _obHash = hash;
 
