@@ -586,7 +586,7 @@ function connectWS2(){
     const sym = curSym;
     setTimeout(()=>{
       if(sock.readyState===1)
-        sock.send(JSON.stringify({id:`sub_d2_${Date.now()}`, reqType:'sub', dataType:`${sym}@depth5`}));
+        sock.send(JSON.stringify({id:`sub_d2_${Date.now()}`, reqType:'sub', dataType:`${sym}@depth20`}));
     }, 200);
   };
   sock.onmessage = async e => {
@@ -631,7 +631,7 @@ function connectWS(){
     wsOk=true; wsDot('live'); clearTimeout(wsTimer); setSt('');
     const sym = curSym;
     const iv  = TF_INT[tf];
-    const subs = [`${sym}@kline_${iv}`,`${sym}@trade`,`${sym}@depth5`];
+    const subs = [`${sym}@kline_${iv}`,`${sym}@trade`,`${sym}@depth20`];
     subs.forEach((dataType,i) => {
       setTimeout(()=>{
         if(ws && ws.readyState===1)
@@ -1375,7 +1375,7 @@ async function fetchOB(){
   _obFetching = false;
 }
 
-setInterval(fetchOB, 1000);
+setInterval(fetchOB, 3000);
 setTimeout(fetchOB, 300);
 
 function switchMkt(m){
