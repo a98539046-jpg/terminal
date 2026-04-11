@@ -1176,7 +1176,7 @@ function drawChart(){
       const yBot = clamp2(rawYBot);
       const ry   = Math.min(yTop,yBot);
       const rh   = Math.max(22, Math.abs(yTop-yBot));
-      ctx.fillStyle='rgba(120,80,210,0.24)';
+      ctx.fillStyle=z.side==='short'?'rgba(255,68,102,0.18)':'rgba(0,200,150,0.18)';
       ctx.fillRect(rx, ry, rw, rh);
       ctx.strokeStyle='rgba(160,110,250,0.95)'; ctx.lineWidth=1.2;
       ctx.beginPath();
@@ -1630,7 +1630,7 @@ mainC.addEventListener('mousemove',e=>{
       const dx=e.clientX-panStartX;
       const barsPerPx=(visCount/mainC.width);
       const shift=Math.round(dx*barsPerPx);
-      const newOffset=Math.max(-30, Math.min(panStartOffset-shift, cs.length-Math.min(visCount,cs.length)));
+      const newOffset=Math.max(-30, Math.min(panStartOffset+shift, cs.length-Math.min(visCount,cs.length)));
       visOffset=newOffset;
       const dy=e.clientY-panStartY;
       if(CM&&CM.rng) priceOffset += dy * (CM.rng/CM.cH);
