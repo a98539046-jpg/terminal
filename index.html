@@ -1331,11 +1331,12 @@ function drawChart(){
         const bx = rightEdge - tw - 4 - arr.reduce((s,w)=>s+w+4,0);
         const ey = isAbove ? pad.t+3 : pad.t+cH-17;
         arr.push(tw);
-        ctx.fillStyle='rgba(60,35,120,0.92)';
+        const offCol=z.side==='short'?'rgba(255,68,102,0.9)':'rgba(0,200,150,0.9)';
+        ctx.fillStyle=z.side==='short'?'rgba(60,10,20,0.92)':'rgba(10,40,30,0.92)';
         ctx.fillRect(bx, ey, tw, 14);
-        ctx.strokeStyle='rgba(160,110,250,0.85)'; ctx.lineWidth=.8;
+        ctx.strokeStyle=offCol; ctx.lineWidth=.8;
         ctx.strokeRect(bx, ey, tw, 14);
-        ctx.fillStyle='rgba(220,190,255,1)'; ctx.textAlign='left';
+        ctx.fillStyle='#fff'; ctx.textAlign='left';
         ctx.fillText(txt, bx+6, ey+10);
         ctx.restore(); return;
       }
@@ -1343,15 +1344,16 @@ function drawChart(){
       const yBot = clamp2(rawYBot);
       const ry   = Math.min(yTop,yBot);
       const rh   = Math.max(22, Math.abs(yTop-yBot));
-      ctx.fillStyle='rgba(120,80,210,0.24)';
+      ctx.fillStyle=z.side==='short'?'rgba(255,68,102,0.18)':'rgba(0,200,150,0.18)';
       ctx.fillRect(rx, ry, rw, rh);
-      ctx.strokeStyle='rgba(160,110,250,0.95)'; ctx.lineWidth=1.2;
+      const zCol=z.side==='short'?'rgba(255,68,102,0.9)':'rgba(0,200,150,0.9)';
+      ctx.strokeStyle=zCol; ctx.lineWidth=1.5;
       ctx.beginPath();
       ctx.moveTo(rx, ry);    ctx.lineTo(rx+rw, ry);
       ctx.moveTo(rx, ry+rh); ctx.lineTo(rx+rw, ry+rh);
       ctx.stroke();
       const yLv=clamp2(toY(z.price));
-      ctx.strokeStyle='rgba(180,130,255,0.55)'; ctx.lineWidth=.8;
+      ctx.strokeStyle=z.side==='short'?'rgba(255,68,102,0.5)':'rgba(0,200,150,0.5)'; ctx.lineWidth=1;
       ctx.setLineDash([6,5]);
       ctx.beginPath(); ctx.moveTo(pad.l,yLv); ctx.lineTo(rightEdge,yLv); ctx.stroke();
       ctx.setLineDash([]);
@@ -1360,9 +1362,9 @@ function drawChart(){
       const tw=ctx.measureText(txt).width;
       const bx=rx+rw-tw-14;
       if(bx>rx){
-        ctx.fillStyle='rgba(30,18,60,0.85)';
+        ctx.fillStyle='rgba(20,20,20,0.85)';
         ctx.fillRect(bx, ry+rh/2-8, tw+10, 15);
-        ctx.fillStyle='rgba(215,185,255,1)'; ctx.textAlign='left';
+        ctx.fillStyle='#fff'; ctx.textAlign='left';
         ctx.fillText(txt, bx+5, ry+rh/2+4);
       }
       ctx.font='8px JetBrains Mono,monospace';
@@ -1651,16 +1653,14 @@ function buildLiqMap(side){
   const vis=cs.slice(-100);
   const levels=[];
 
-  // ШОРТ: стоп ВЫШЕ входа — ищем уровни сопротивления ВЫШЕ цены
-  // ЛОНГ: стоп НИЖЕ входа — ищем уровни поддержки НИЖЕ цены
+  // Для шорта: ищем сопротивления ВЫШЕ цены — стоп за них
+  // Для лонга: ищем поддержки НИЖЕ цены — стоп за них
   for(let i=3;i<vis.length-3;i++){
     const c=vis[i];
     if(!isLong){
-      // Шорт: Swing High (сопротивление выше)
       if([vis[i-1],vis[i-2],vis[i-3],vis[i+1],vis[i+2],vis[i+3]].every(x=>c.h>=x.h))
         levels.push({p:c.h, vol:c.v, label:'RES'});
     } else {
-      // Лонг: Swing Low (поддержка ниже)
       if([vis[i-1],vis[i-2],vis[i-3],vis[i+1],vis[i+2],vis[i+3]].every(x=>c.l<=x.l))
         levels.push({p:c.l, vol:c.v, label:'SUP'});
     }
@@ -1669,18 +1669,15 @@ function buildLiqMap(side){
   const perDay=Math.round(86400000/TF_MS[tf]);
   const day=cs.slice(-Math.max(perDay,1));
   const week=cs.slice(-Math.min(Math.round(604800000/TF_MS[tf]),cs.length));
-
   if(!isLong){
-    // Шорт: максимумы — сопротивления выше цены
-    levels.push({p:Math.max(...day.map(c=>c.h)),  vol:999, label:'H24'});
+    levels.push({p:Math.max(...day.map(c=>c.h)), vol:999, label:'H24'});
     levels.push({p:Math.max(...week.map(c=>c.h)), vol:998, label:'H7d'});
   } else {
-    // Лонг: минимумы — поддержки ниже цены
-    levels.push({p:Math.min(...day.map(c=>c.l)),  vol:999, label:'L24'});
+    levels.push({p:Math.min(...day.map(c=>c.l)), vol:999, label:'L24'});
     levels.push({p:Math.min(...week.map(c=>c.l)), vol:998, label:'L7d'});
   }
 
-  // Фильтр: шорт — только ВЫШЕ цены; лонг — только НИЖЕ цены
+  // Фильтр: шорт — только уровни ВЫШЕ цены; лонг — только НИЖЕ
   const filtered = levels
     .filter(lv => !isLong
       ? (lv.p > p && (lv.p-p)/p < 0.10)
@@ -1695,7 +1692,6 @@ function buildLiqMap(side){
     const dist=(lv.p-p)/p*100;
     liqMapZones.push({
       price: lv.p,
-      // Шорт: зона ВЫШЕ уровня; Лонг: зона НИЖЕ уровня
       top:   !isLong ? lv.p + bandwidth : lv.p,
       bot:   !isLong ? lv.p             : lv.p - bandwidth,
       label: lv.label,
@@ -1934,7 +1930,7 @@ mainC.addEventListener('mousemove',e=>{
       const dx=e.clientX-panStartX;
       const barsPerPx=(visCount/mainC.width);
       const shift=Math.round(dx*barsPerPx);
-      const newOffset=Math.max(-30, Math.min(panStartOffset-shift, cs.length-Math.min(visCount,cs.length)));
+      const newOffset=Math.max(-30, Math.min(panStartOffset+shift, cs.length-Math.min(visCount,cs.length)));
       visOffset=newOffset;
 
       const dy=e.clientY-panStartY;
