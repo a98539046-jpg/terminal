@@ -1631,56 +1631,55 @@ function buildLiqMap(side){
   if(!cs||cs.length<10) return;
   liqMapZones=[];
 
-  const perDay=Math.round(86400000/TF_MS[tf]);
-  const day=cs.slice(-Math.max(perDay,1));
+  const bw = p * 0.006; // высота зоны = 0.6% цены
+
   const week=cs.slice(-Math.min(Math.round(604800000/TF_MS[tf]),cs.length));
 
-  // Шорт: зона ВЫШЕ H7d (сопротивление)
-  // Лонг: зона НИЖЕ L7d (поддержка)
-  const keyLevel = !isLong
-    ? Math.max(...week.map(c=>c.h))   // H7d для шорта
-    : Math.min(...week.map(c=>c.l));   // L7d для лонга
+  // Главный уровень: H7d для шорта (ВЫШЕ цены), L7d для лонга (НИЖЕ цены)
+  const h7 = Math.max(...week.map(c=>c.h));
+  const l7  = Math.min(...week.map(c=>c.l));
 
-  const dist = (keyLevel - p) / p * 100;
-  const bandwidth = Math.abs(keyLevel) * 0.008; // высота прямоугольника 0.8%
+  if(!isLong && h7 > p){
+    // Шорт: прямоугольник ВЫШЕ H7d
+    const d=(h7-p)/p*100;
+    liqMapZones.push({price:h7, top:h7+bw, bot:h7, label:'H7d', dist:'+'+d.toFixed(1)+'%', side});
+  }
+  if(isLong && l7 < p){
+    // Лонг: прямоугольник НИЖЕ L7d
+    const d=(l7-p)/p*100;
+    liqMapZones.push({price:l7, top:l7, bot:l7-bw, label:'L7d', dist:d.toFixed(1)+'%', side});
+  }
 
-  liqMapZones.push({
-    price: keyLevel,
-    top:   !isLong ? keyLevel + bandwidth : keyLevel,
-    bot:   !isLong ? keyLevel             : keyLevel - bandwidth,
-    label: !isLong ? 'H7d' : 'L7d',
-    dist:  (dist>0?'+':'')+dist.toFixed(1)+'%',
-    side:  side
-  });
-
-  // Добавляем также swing highs/lows
-  const vis=cs.slice(-100);
+  // Swing уровни — строго по стороне от цены
+  const vis=cs.slice(-80);
   const swings=[];
-  for(let i=3;i<vis.length-3;i++){
+  for(let i=2;i<vis.length-2;i++){
     const c=vis[i];
-    if(!isLong){
-      if([vis[i-1],vis[i-2],vis[i-3],vis[i+1],vis[i+2],vis[i+3]].every(x=>c.h>=x.h))
+    if(!isLong && c.h > p){
+      // Шорт: swing high ВЫШЕ цены
+      if(vis[i-1].h<c.h && vis[i-2].h<c.h && vis[i+1].h<c.h && vis[i+2].h<c.h)
         swings.push({p:c.h, label:'RES'});
-    } else {
-      if([vis[i-1],vis[i-2],vis[i-3],vis[i+1],vis[i+2],vis[i+3]].every(x=>c.l<=x.l))
+    } else if(isLong && c.l < p){
+      // Лонг: swing low НИЖЕ цены
+      if(vis[i-1].l>c.l && vis[i-2].l>c.l && vis[i+1].l>c.l && vis[i+2].l>c.l)
         swings.push({p:c.l, label:'SUP'});
     }
   }
-  // Берём до 2 свинг-уровней в нужной стороне от цены
-  const filtered = swings
-    .filter(s => !isLong ? (s.p > p && s.p < p*1.10) : (s.p < p && s.p > p*0.90))
-    .sort((a,b) => !isLong ? a.p-b.p : b.p-a.p)
-    .slice(0,2);
 
-  filtered.forEach(s=>{
+  // Дедупликация и сортировка: ближайшие к цене первыми
+  const uniq=[];
+  swings.forEach(s=>{
+    if(!uniq.some(u=>Math.abs(u.p-s.p)/p<0.005)) uniq.push(s);
+  });
+  uniq.sort((a,b)=>!isLong ? a.p-b.p : b.p-a.p).slice(0,2).forEach(s=>{
     const d=(s.p-p)/p*100;
     liqMapZones.push({
-      price: s.p,
-      top:   !isLong ? s.p+bandwidth : s.p,
-      bot:   !isLong ? s.p           : s.p-bandwidth,
-      label: s.label,
-      dist:  (d>0?'+':'')+d.toFixed(1)+'%',
-      side:  side
+      price:s.p,
+      top:  !isLong ? s.p+bw : s.p,
+      bot:  !isLong ? s.p    : s.p-bw,
+      label:s.label,
+      dist: (d>0?'+':'')+d.toFixed(1)+'%',
+      side
     });
   });
 
