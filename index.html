@@ -1626,14 +1626,14 @@ function buildLiqMap(side){
   const l7  = Math.min(...week.map(c=>c.l));
 
   if(!isLong && h7 > p){
-    // Шорт: прямоугольник ВЫШЕ H7d
+    // Шорт: прямоугольник ВЫШЕ H7d (визуально выше уровня)
     const d=(h7-p)/p*100;
-    liqMapZones.push({price:h7, top:h7+bw, bot:h7, label:'H7d', dist:'+'+d.toFixed(1)+'%', side});
+    liqMapZones.push({price:h7, top:h7+bw, bot:h7-bw, label:'H7d', dist:'+'+d.toFixed(1)+'%', side});
   }
   if(isLong && l7 < p){
-    // Лонг: прямоугольник НИЖЕ L7d
+    // Лонг: прямоугольник НИЖЕ L7d (визуально ниже уровня)
     const d=(l7-p)/p*100;
-    liqMapZones.push({price:l7, top:l7, bot:l7-bw, label:'L7d', dist:d.toFixed(1)+'%', side});
+    liqMapZones.push({price:l7, top:l7+bw, bot:l7-bw, label:'L7d', dist:d.toFixed(1)+'%', side});
   }
 
 
