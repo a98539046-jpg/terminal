@@ -1883,7 +1883,7 @@ mainC.addEventListener('mousemove',e=>{
       const dx=e.clientX-panStartX;
       const barsPerPx=(visCount/mainC.width);
       const shift=Math.round(dx*barsPerPx);
-      const newOffset=Math.max(-30, Math.min(panStartOffset-shift, cs.length-Math.min(visCount,cs.length)));
+      const newOffset=Math.max(-30, Math.min(panStartOffset+shift, cs.length-Math.min(visCount,cs.length)));
       visOffset=newOffset;
 
       const dy=e.clientY-panStartY;
