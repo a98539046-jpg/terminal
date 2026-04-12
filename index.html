@@ -1311,75 +1311,58 @@ function drawChart(){
   if(liqMapZones.length){
     const clamp2=v=>Math.min(Math.max(v,pad.t),pad.t+cH);
     const rightEdge=pad.l+cW;
-    const widths=[0.88, 0.52, 0.72, 0.45, 0.65];
+    const zoneW=Math.min(cW*0.40,250);
+    const rx=rightEdge-zoneW;
     const offTop=[], offBot=[];
-    const sorted=[...liqMapZones].sort((a,b)=>Math.abs(a.price-curP)-Math.abs(b.price-curP));
-    sorted.forEach((z,i)=>{
-      const rw  = cW * widths[i % widths.length];
-      const rx  = rightEdge - rw;
-      const rawYTop = toY(z.top);
-      const rawYBot = toY(z.bot);
-      const onScreen = rawYBot < pad.t+cH+10 && rawYTop > pad.t-10;
+    liqMapZones.forEach((z,i)=>{
+      const isShort=z.side==='short';
+      const zCol=isShort?'rgba(255,68,102,':'rgba(0,200,150,';
+      const rawTop=toY(z.top), rawBot=toY(z.bot);
+      const onScreen=rawBot<pad.t+cH+10&&rawTop>pad.t-10;
       ctx.save();
       if(!onScreen){
-        const isAbove = (rawYTop+rawYBot)/2 < pad.t;
-        const arr = isAbove ? offTop : offBot;
-        const arrow = isAbove ? '▲' : '▼';
-        const txt = arrow+' '+z.dist+'  '+fmtP(z.price);
+        const isAbove=(rawTop+rawBot)/2<pad.t;
+        const arr=isAbove?offTop:offBot;
+        const arrow=isAbove?'▲':'▼';
+        const txt=arrow+' '+z.label+' '+fmtP(z.price)+'  '+z.dist;
         ctx.font='bold 8px JetBrains Mono,monospace';
-        const tw=ctx.measureText(txt).width+12;
-        const bx = rightEdge - tw - 4 - arr.reduce((s,w)=>s+w+4,0);
-        const ey = isAbove ? pad.t+3 : pad.t+cH-17;
+        const tw=ctx.measureText(txt).width+10;
+        const bx=rightEdge-tw-4-arr.reduce((s,w)=>s+w+4,0);
+        const ey=isAbove?pad.t+3:pad.t+cH-17;
         arr.push(tw);
-        ctx.fillStyle='rgba(60,35,120,0.92)';
-        ctx.fillRect(bx, ey, tw, 14);
-        ctx.strokeStyle='rgba(160,110,250,0.85)'; ctx.lineWidth=.8;
-        ctx.strokeRect(bx, ey, tw, 14);
-        ctx.fillStyle='rgba(220,190,255,1)'; ctx.textAlign='left';
-        ctx.fillText(txt, bx+6, ey+10);
-        ctx.restore(); return;
+        ctx.fillStyle=zCol+'0.85)';ctx.fillRect(bx,ey,tw,14);
+        ctx.fillStyle='#fff';ctx.textAlign='left';ctx.font='bold 8px JetBrains Mono,monospace';
+        ctx.fillText(txt,bx+5,ey+10);
+        ctx.restore();return;
       }
-      const yTop = clamp2(rawYTop);
-      const yBot = clamp2(rawYBot);
-      const ry   = Math.min(yTop,yBot);
-      const rh   = Math.max(22, Math.abs(yTop-yBot));
-      ctx.fillStyle='rgba(120,80,210,0.24)';
-      ctx.fillRect(rx, ry, rw, rh);
-      ctx.strokeStyle='rgba(160,110,250,0.95)'; ctx.lineWidth=1.2;
-      ctx.beginPath();
-      ctx.moveTo(rx, ry);    ctx.lineTo(rx+rw, ry);
-      ctx.moveTo(rx, ry+rh); ctx.lineTo(rx+rw, ry+rh);
-      ctx.stroke();
+      const yTop=clamp2(rawTop), yBot=clamp2(rawBot);
+      const ry=Math.min(yTop,yBot);
+      const rh=Math.max(10,Math.abs(yTop-yBot));
+      // Прямоугольник зоны
+      ctx.fillStyle=zCol+'0.18)';ctx.fillRect(rx,ry,zoneW,rh);
+      // Верхняя и нижняя граница зоны
+      ctx.strokeStyle=zCol+'0.9)';ctx.lineWidth=1.5;ctx.setLineDash([]);
+      ctx.beginPath();ctx.moveTo(rx,ry);ctx.lineTo(rightEdge,ry);ctx.stroke();
+      ctx.beginPath();ctx.moveTo(rx,ry+rh);ctx.lineTo(rightEdge,ry+rh);ctx.stroke();
+      // Левая граница
+      ctx.strokeStyle=zCol+'0.35)';ctx.lineWidth=1;
+      ctx.beginPath();ctx.moveTo(rx,ry);ctx.lineTo(rx,ry+rh);ctx.stroke();
+      // Пунктирная линия уровня через весь график
       const yLv=clamp2(toY(z.price));
-      ctx.strokeStyle='rgba(180,130,255,0.55)'; ctx.lineWidth=.8;
-      ctx.setLineDash([6,5]);
-      ctx.beginPath(); ctx.moveTo(pad.l,yLv); ctx.lineTo(rightEdge,yLv); ctx.stroke();
+      ctx.strokeStyle=zCol+'0.5)';ctx.lineWidth=0.8;ctx.setLineDash([5,4]);
+      ctx.beginPath();ctx.moveTo(pad.l,yLv);ctx.lineTo(rightEdge,yLv);ctx.stroke();
       ctx.setLineDash([]);
-      const txt=z.label+'  '+fmtP(z.price);
+      // Метка: название + цена + % дистанция
+      const txt=z.label+'  '+fmtP(z.price)+'   '+z.dist;
       ctx.font='bold 9px JetBrains Mono,monospace';
       const tw=ctx.measureText(txt).width;
-      const bx=rx+rw-tw-14;
-      if(bx>rx){
-        ctx.fillStyle='rgba(30,18,60,0.85)';
-        ctx.fillRect(bx, ry+rh/2-8, tw+10, 15);
-        ctx.fillStyle='rgba(215,185,255,1)'; ctx.textAlign='left';
-        ctx.fillText(txt, bx+5, ry+rh/2+4);
-      }
-      ctx.font='8px JetBrains Mono,monospace';
-      ctx.fillStyle='rgba(180,150,240,0.9)'; ctx.textAlign='left';
-      ctx.fillText(z.dist, rx+5, ry+rh/2+4);
-      const pctEl=document.getElementById('posSizePct');
-      const pct=+(pctEl?.value||10)/100;
-      const posUSDT=12450*pct;
-      const distPct=Math.abs(parseFloat(z.dist))/100;
-      const profit=(posUSDT*distPct).toFixed(0);
-      ctx.font='7px JetBrains Mono,monospace';
-      ctx.fillStyle='rgba(160,220,160,0.8)';
-      ctx.fillText('+$'+profit, rx+5, ry+rh/2+13);
+      const lx=rightEdge-tw-10;
+      const ly=ry+rh/2;
+      ctx.fillStyle=zCol+'0.85)';ctx.fillRect(lx-2,ly-8,tw+6,13);
+      ctx.fillStyle='#fff';ctx.textAlign='left';ctx.fillText(txt,lx+1,ly+4);
       ctx.restore();
     });
   }
-
   drawUserObjects();
   if(positionDrawings.length) drawPositions();
 
@@ -1648,64 +1631,62 @@ function buildLiqMap(side){
   if(!cs||cs.length<10) return;
   liqMapZones=[];
 
-  const vis=cs.slice(-100);
-  const levels=[];
-
-  // ШОРТ: стоп ВЫШЕ входа — ищем уровни сопротивления ВЫШЕ цены
-  // ЛОНГ: стоп НИЖЕ входа — ищем уровни поддержки НИЖЕ цены
-  for(let i=3;i<vis.length-3;i++){
-    const c=vis[i];
-    if(!isLong){
-      // Шорт: Swing High (сопротивление выше)
-      if([vis[i-1],vis[i-2],vis[i-3],vis[i+1],vis[i+2],vis[i+3]].every(x=>c.h>=x.h))
-        levels.push({p:c.h, vol:c.v, label:'RES'});
-    } else {
-      // Лонг: Swing Low (поддержка ниже)
-      if([vis[i-1],vis[i-2],vis[i-3],vis[i+1],vis[i+2],vis[i+3]].every(x=>c.l<=x.l))
-        levels.push({p:c.l, vol:c.v, label:'SUP'});
-    }
-  }
-
   const perDay=Math.round(86400000/TF_MS[tf]);
   const day=cs.slice(-Math.max(perDay,1));
   const week=cs.slice(-Math.min(Math.round(604800000/TF_MS[tf]),cs.length));
 
-  if(!isLong){
-    // Шорт: максимумы — сопротивления выше цены
-    levels.push({p:Math.max(...day.map(c=>c.h)),  vol:999, label:'H24'});
-    levels.push({p:Math.max(...week.map(c=>c.h)), vol:998, label:'H7d'});
-  } else {
-    // Лонг: минимумы — поддержки ниже цены
-    levels.push({p:Math.min(...day.map(c=>c.l)),  vol:999, label:'L24'});
-    levels.push({p:Math.min(...week.map(c=>c.l)), vol:998, label:'L7d'});
+  // Шорт: зона ВЫШЕ H7d (сопротивление)
+  // Лонг: зона НИЖЕ L7d (поддержка)
+  const keyLevel = !isLong
+    ? Math.max(...week.map(c=>c.h))   // H7d для шорта
+    : Math.min(...week.map(c=>c.l));   // L7d для лонга
+
+  const dist = (keyLevel - p) / p * 100;
+  const bandwidth = Math.abs(keyLevel) * 0.008; // высота прямоугольника 0.8%
+
+  liqMapZones.push({
+    price: keyLevel,
+    top:   !isLong ? keyLevel + bandwidth : keyLevel,
+    bot:   !isLong ? keyLevel             : keyLevel - bandwidth,
+    label: !isLong ? 'H7d' : 'L7d',
+    dist:  (dist>0?'+':'')+dist.toFixed(1)+'%',
+    side:  side
+  });
+
+  // Добавляем также swing highs/lows
+  const vis=cs.slice(-100);
+  const swings=[];
+  for(let i=3;i<vis.length-3;i++){
+    const c=vis[i];
+    if(!isLong){
+      if([vis[i-1],vis[i-2],vis[i-3],vis[i+1],vis[i+2],vis[i+3]].every(x=>c.h>=x.h))
+        swings.push({p:c.h, label:'RES'});
+    } else {
+      if([vis[i-1],vis[i-2],vis[i-3],vis[i+1],vis[i+2],vis[i+3]].every(x=>c.l<=x.l))
+        swings.push({p:c.l, label:'SUP'});
+    }
   }
+  // Берём до 2 свинг-уровней в нужной стороне от цены
+  const filtered = swings
+    .filter(s => !isLong ? (s.p > p && s.p < p*1.10) : (s.p < p && s.p > p*0.90))
+    .sort((a,b) => !isLong ? a.p-b.p : b.p-a.p)
+    .slice(0,2);
 
-  // Фильтр: шорт — только ВЫШЕ цены; лонг — только НИЖЕ цены
-  const filtered = levels
-    .filter(lv => !isLong
-      ? (lv.p > p && (lv.p-p)/p < 0.10)
-      : (lv.p < p && (p-lv.p)/p < 0.10))
-    .sort((a,b) => !isLong ? a.p-b.p : b.p-a.p);
-
-  const uniq=[];
-  filtered.forEach(lv=>{ if(!uniq.some(u=>Math.abs(u.p-lv.p)/p<0.008)) uniq.push(lv); });
-
-  const bandwidth = p * 0.006;
-  uniq.slice(0,3).forEach(lv=>{
-    const dist=(lv.p-p)/p*100;
+  filtered.forEach(s=>{
+    const d=(s.p-p)/p*100;
     liqMapZones.push({
-      price: lv.p,
-      // Шорт: зона ВЫШЕ уровня; Лонг: зона НИЖЕ уровня
-      top:   !isLong ? lv.p + bandwidth : lv.p,
-      bot:   !isLong ? lv.p             : lv.p - bandwidth,
-      label: lv.label,
-      dist:  (dist>0?'+':'')+dist.toFixed(1)+'%',
+      price: s.p,
+      top:   !isLong ? s.p+bandwidth : s.p,
+      bot:   !isLong ? s.p           : s.p-bandwidth,
+      label: s.label,
+      dist:  (d>0?'+':'')+d.toFixed(1)+'%',
       side:  side
     });
   });
 
   schedDraw();
 }
+
 
 function togLiq(el){showLiq=!showLiq;el.classList.toggle('active',showLiq);document.getElementById('liqLeg').style.display=showLiq?'flex':'none';drawChart();}
 function togStop(el){showStop=!showStop;el.classList.toggle('active',showStop);drawChart();}
