@@ -1650,38 +1650,7 @@ function buildLiqMap(side){
     liqMapZones.push({price:l7, top:l7, bot:l7-bw, label:'L7d', dist:d.toFixed(1)+'%', side});
   }
 
-  // Swing уровни — строго по стороне от цены
-  const vis=cs.slice(-80);
-  const swings=[];
-  for(let i=2;i<vis.length-2;i++){
-    const c=vis[i];
-    if(!isLong && c.h > p){
-      // Шорт: swing high ВЫШЕ цены
-      if(vis[i-1].h<c.h && vis[i-2].h<c.h && vis[i+1].h<c.h && vis[i+2].h<c.h)
-        swings.push({p:c.h, label:'RES'});
-    } else if(isLong && c.l < p){
-      // Лонг: swing low НИЖЕ цены
-      if(vis[i-1].l>c.l && vis[i-2].l>c.l && vis[i+1].l>c.l && vis[i+2].l>c.l)
-        swings.push({p:c.l, label:'SUP'});
-    }
-  }
 
-  // Дедупликация и сортировка: ближайшие к цене первыми
-  const uniq=[];
-  swings.forEach(s=>{
-    if(!uniq.some(u=>Math.abs(u.p-s.p)/p<0.005)) uniq.push(s);
-  });
-  uniq.sort((a,b)=>!isLong ? a.p-b.p : b.p-a.p).slice(0,2).forEach(s=>{
-    const d=(s.p-p)/p*100;
-    liqMapZones.push({
-      price:s.p,
-      top:  !isLong ? s.p+bw : s.p,
-      bot:  !isLong ? s.p    : s.p-bw,
-      label:s.label,
-      dist: (d>0?'+':'')+d.toFixed(1)+'%',
-      side
-    });
-  });
 
   schedDraw();
 }
