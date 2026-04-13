@@ -534,12 +534,12 @@ canvas{position:absolute;top:0;left:0;}
       <div style="font-size:10px;color:var(--text3);line-height:1.6">
         Для зелёной точки "BingX Live" нужен WS-прокси сервер.<br>
         После деплоя на Railway — вставь сюда WSS-ссылку вида:<br>
-        <span style="color:var(--cyan)">wss://твой-проект.up.railway.app</span>
+        <span style="color:var(--cyan)">wss://твой-проект.up.193.233.138.227:8080</span>
       </div>
       <div>
         <div class="fl">WSS URL прокси</div>
         <div class="fw">
-          <input type="text" id="proxyUrlInput" placeholder="wss://your-proxy.up.railway.app"
+          <input type="text" id="proxyUrlInput" placeholder="wss://your-proxy.up.193.233.138.227:8080"
             style="font-size:10px" value="">
         </div>
       </div>
@@ -553,11 +553,11 @@ canvas{position:absolute;top:0;left:0;}
       </div>
       <div id="proxyStatus" style="font-size:10px;color:var(--text3);text-align:center;min-height:16px"></div>
       <div style="background:var(--bg3);border:1px solid var(--border2);border-radius:5px;padding:10px;font-size:9px;color:var(--text3);line-height:1.8">
-        <div style="color:var(--text2);font-weight:600;margin-bottom:4px">Как получить прокси (Railway.app):</div>
-        <div>1. Зайди на <span style="color:var(--cyan)">railway.app</span> → войди через GitHub</div>
+        <div style="color:var(--text2);font-weight:600;margin-bottom:4px">Как получить прокси (193.233.138.227:8080):</div>
+        <div>1. Зайди на <span style="color:var(--cyan)">193.233.138.227:8080</span> → войди через GitHub</div>
         <div>2. New Project → Deploy from GitHub repo</div>
         <div>3. Загрузи папку <span style="color:var(--yellow)">ws-proxy</span> в GitHub репозиторий</div>
-        <div>4. Railway даст ссылку вида <span style="color:var(--cyan)">xxx.up.railway.app</span></div>
+        <div>4. Railway даст ссылку вида <span style="color:var(--cyan)">xxx.up.193.233.138.227:8080</span></div>
         <div>5. Замени <span style="color:var(--yellow)">https://</span> на <span style="color:var(--green)">wss://</span> и вставь сюда</div>
       </div>
     </div>
@@ -621,7 +621,7 @@ const TF_MS  = {'1m':6e4,'5m':3e5,'15m':9e5,'30m':18e5,'1h':36e5,'4h':144e5,'1d'
 let ws=null, wsTimer=null, wsOk=false;
 let ws2=null, ws2Timer=null;
 
-const PROXY_BASE = 'wss://ws-proxy-production-32b7.up.railway.app';
+const PROXY_BASE = 'wss://ws-proxy-production-32b7.up.193.233.138.227:8080';
 
 function getProxyUrl(market){
   const custom = window.WS_PROXY_URL || localStorage.getItem('ws_proxy_url');
@@ -1442,7 +1442,7 @@ function updOB(){
   document.getElementById('fMidS').textContent=symShort+' · Перп';
 }
 
-const REST_PROXY = 'https://ws-proxy-production-32b7.up.railway.app/api?url=';
+const REST_PROXY = 'https://ws-proxy-production-32b7.up.193.233.138.227:8080/api?url=';
 
 let _obFetching = false;
 
