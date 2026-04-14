@@ -696,6 +696,8 @@ function onBingXMsg(d){
     ST[mkt].prevP = p;
     updOPPrice(p);
     calcTQuiet();
+    // Проверяем отложенные ордера
+    checkPendingOrders(p);
     if(!ST[mkt]._tc) ST[mkt]._tc=0;
     if(++ST[mkt]._tc % 8 === 0){ updateLevels(); return; }
     schedDraw();
@@ -1432,6 +1434,26 @@ function buildLiqMap(side){
   const cs=ST[mkt].candles[tf];
   if(!cs||cs.length<10) return;
   liqMapZones=[];
+  const week=cs.slice(-Math.min(Math.round(604800000/TF_MS[tf]),cs.length));
+  const bandwidth=p*0.015;
+  if(isLong){
+    const l7d=Math.min(...week.map(c=>c.l));
+    const dist=(l7d-p)/p*100;
+    liqMapZones.push({price:l7d,top:l7d,bot:l7d-bandwidth,label:'L7d',dist:(dist>0?'+':'')+dist.toFixed(1)+'%'});
+  } else {
+    const h7d=Math.max(...week.map(c=>c.h));
+    const dist=(h7d-p)/p*100;
+    liqMapZones.push({price:h7d,top:h7d+bandwidth,bot:h7d,label:'H7d',dist:(dist>0?'+':'')+dist.toFixed(1)+'%'});
+  }
+  schedDraw();
+}
+function _buildLiqMap_OLD(side){
+  const isLong = side==='long';
+  const p = curP || (()=>{const cs=ST[mkt].candles[tf];return cs?.length?cs[cs.length-1].c:0;})();
+  if(!p) return;
+  const cs=ST[mkt].candles[tf];
+  if(!cs||cs.length<10) return;
+  liqMapZones=[];
   const levels=[];
   const perDay=Math.round(86400000/TF_MS[tf]);
   const day=cs.slice(-Math.max(perDay,1));
@@ -1630,7 +1652,7 @@ mainC.addEventListener('mousemove',e=>{
       const dx=e.clientX-panStartX;
       const barsPerPx=(visCount/mainC.width);
       const shift=Math.round(dx*barsPerPx);
-      const newOffset=Math.max(-30, Math.min(panStartOffset-shift, cs.length-Math.min(visCount,cs.length)));
+      const newOffset=Math.max(-30, Math.min(panStartOffset+shift, cs.length-Math.min(visCount,cs.length)));
       visOffset=newOffset;
       const dy=e.clientY-panStartY;
       if(CM&&CM.rng) priceOffset += dy * (CM.rng/CM.cH);
@@ -1722,7 +1744,8 @@ mainC.addEventListener('click',e=>{
   if(activeTool==='long'||activeTool==='short'){
     const isLong=activeTool==='long';
     const tp=isLong?p*1.03:p*0.97, sl=isLong?p*0.98:p*1.02;
-    positionDrawings=[{entry:p,tp,sl,side:activeTool,id:Date.now()}];
+    // Создаём отложенный ордер (pending) — не позиция, ждём касания
+    positionDrawings=[{entry:p,tp,sl,side:activeTool,id:Date.now(),pending:true}];
     const activeTab=document.querySelector('.bp-tab.active');
     if(activeTab) setBP(activeTab,'pos');
     activeTool='cursor';
@@ -2067,6 +2090,30 @@ function drawPreview(mx, my){
   octx.restore();
 }
 
+function checkPendingOrders(price){
+  let changed=false;
+  positionDrawings.forEach(pos=>{
+    if(!pos.pending) return;
+    const isLong=pos.side==='long';
+    // Ордер срабатывает когда цена достигает уровня entry
+    const triggered = isLong ? price <= pos.entry : price >= pos.entry;
+    if(triggered){
+      pos.pending=false;
+      pos.entry=price; // фиксируем точную цену срабатывания
+      changed=true;
+      // Уведомление
+      const col=isLong?'#00c896':'#ff4466';
+      const lbl=isLong?'▲ Лонг сработал @ ':'▼ Шорт сработал @ ';
+      const t=document.createElement('div');
+      t.style.cssText=`position:fixed;top:50px;right:280px;background:#1c2330;border:1px solid ${col};color:${col};padding:8px 16px;border-radius:6px;font-size:11px;z-index:9999;font-family:JetBrains Mono,monospace;`;
+      t.textContent=lbl+fmtP(price);
+      document.body.appendChild(t); setTimeout(()=>t.remove(),3000);
+    }
+  });
+  if(changed){ const at=document.querySelector('.bp-tab.active'); if(at) setBP(at,'pos'); schedDraw(); }
+}
+
+
 function drawPositions(){
   if(!positionDrawings.length||!CM.rng) return;
   const {pad,W,toY,cH}=CM;
@@ -2077,8 +2124,25 @@ function drawPositions(){
     const GREEN='rgba(0,200,150,', RED='rgba(255,68,102,', entryCol=isLong?'#00c896':'#ff4466';
     ctx.save();
     const line=(y,col,lw,dash=[])=>{ ctx.strokeStyle=col; ctx.lineWidth=lw; ctx.setLineDash(dash); ctx.beginPath(); ctx.moveTo(pad.l,clamp(y)); ctx.lineTo(W-pad.r,clamp(y)); ctx.stroke(); ctx.setLineDash([]); };
-    line(yTP,'#00c896',1.5,[6,3]); line(yEntry,entryCol,1.5); line(ySL,'#ff4466',1.5,[6,3]);
-    const pct=+(document.getElementById('posSizePct')?.value||10)/100, avail=12450, margin=avail*pct, qty=margin*lev/(pos.entry||1), dir=isLong?1:-1;
+    if(pos.pending){
+      // Отложенный ордер: только линия входа пунктиром, нет P&L
+      line(yEntry,entryCol,1.5,[4,4]);
+      const y=clamp(yEntry);
+      const pendingTxt=(isLong?'▲ ЛИМИТ (ожидание)  ':'▼ ЛИМИТ (ожидание)  ')+fmtP(pos.entry);
+      ctx.font='bold 8px JetBrains Mono,monospace';
+      const tw=ctx.measureText(pendingTxt).width, bw=tw+10, bh=14, bx=W-pad.r-bw-3;
+      ctx.fillStyle=isLong?'rgba(0,200,150,0.75)':'rgba(255,68,102,0.75)';
+      ctx.fillRect(bx,y-bh/2,bw,bh);
+      ctx.fillStyle='#000'; ctx.textAlign='left'; ctx.fillText(pendingTxt,bx+5,y+4);
+      const delX=pad.l+4, delY=y-7;
+      ctx.fillStyle='rgba(22,26,34,.95)'; ctx.fillRect(delX,delY,16,13);
+      ctx.strokeStyle='#4a5a7a'; ctx.lineWidth=.5; ctx.strokeRect(delX,delY,16,13);
+      ctx.fillStyle='#c8d4e8'; ctx.font='bold 10px monospace'; ctx.textAlign='center';
+      ctx.fillText('×',delX+8,delY+10);
+      pos._delBtn={x:delX,y:delY,w:16,h:13};
+    } else {
+      line(yTP,'#00c896',1.5,[6,3]); line(yEntry,entryCol,1.5); line(ySL,'#ff4466',1.5,[6,3]);
+      const pct=+(document.getElementById('posSizePct')?.value||10)/100, avail=12450, margin=avail*pct, qty=margin*lev/(pos.entry||1), dir=isLong?1:-1;
     const pTP=((pos.tp-pos.entry)*qty*dir), pSL=((pos.sl-pos.entry)*qty*dir), rr=Math.abs((pos.tp-pos.entry)/(pos.sl-pos.entry||1));
     const badge=(rawY,label,price,bg,pnl)=>{
       const y=clamp(rawY);
@@ -2099,6 +2163,7 @@ function drawPositions(){
     ctx.fillStyle='#c8d4e8'; ctx.font='bold 10px monospace'; ctx.textAlign='center';
     ctx.fillText('×',delX+8,delY+10);
     pos._delBtn={x:delX,y:delY,w:16,h:13};
+    } // end else (active position)
     ctx.restore();
   });
 }
@@ -2113,22 +2178,29 @@ function setBP(el,tab){
     if(totalPos===0){ c.innerHTML='<div style="padding:40px;text-align:center;color:var(--text3)">Нет открытых позиций</div>'; return; }
     const drawn=positionDrawings.map(pos=>{
       const isLong=pos.side==='long', pct=+(document.getElementById('posSizePct')?.value||10)/100;
-      const margin=12450*pct, qty=(margin*lev/(pos.entry||1)), pnl=(curP-pos.entry)*qty*(isLong?1:-1), pp=pnl/(margin)*100;
-      return {sym:curSymDisplay.replace('/',''),dir:pos.side,sz:qty,un:curSym.replace('-USDT',''),lev,en:pos.entry,liq:isLong?pos.entry*(1-0.008/lev):pos.entry*(1+0.008/lev),tp:fmtP(pos.tp),sl:fmtP(pos.sl),mg:margin,pnl,pp,fromChart:true};
+      const margin=12450*pct, qty=(margin*lev/(pos.entry||1));
+      const pnl=pos.pending?null:(curP-pos.entry)*qty*(isLong?1:-1);
+      const pp=pos.pending?null:pnl/(margin)*100;
+      return {sym:curSymDisplay.replace('/',''),dir:pos.side,sz:qty,un:curSym.replace('-USDT',''),lev,en:pos.entry,liq:isLong?pos.entry*(1-0.008/lev):pos.entry*(1+0.008/lev),tp:fmtP(pos.tp),sl:fmtP(pos.sl),mg:margin,pnl,pp,fromChart:true,pending:pos.pending};
     });
     const allPos=[...drawn,...POS];
     c.innerHTML='<table class="bpt"><thead><tr><th>Пара</th><th>Напр.</th><th>Размер</th><th>Вход</th><th>Рынок</th><th>Нереализ П/У</th><th>Ликвид.</th><th>Маржа</th><th>ТП/СЛ</th><th>Действия</th></tr></thead><tbody>'+
     allPos.map(p=>{
       const g=p.pnl>=0, f=p.en<1?6:2;
       const badge=p.fromChart?` <span style="font-size:8px;color:var(--accent);opacity:.7">📊</span>`:'';
-      return `<tr${p.fromChart?` style="background:rgba(59,130,246,.05)"`:''}>
-        <td>${p.sym}${badge}</td><td><span class="${p.dir==='long'?'bl':'bs'}">${p.dir==='long'?'Лонг':'Шорт'}</span> ${p.lev}×</td>
+      const pnlCell = p.pending
+        ? `<td style="color:var(--text3);font-style:italic">⏳ ожидание</td>`
+        : `<td class="${g?'pg':'pr'}">${g?'+':''}${p.pnl.toFixed(2)}<br><span style="font-size:9px">(${p.pp.toFixed(1)}%)</span></td>`;
+      const rowBg = p.pending ? `style="background:rgba(245,166,35,.04)"` : (p.fromChart?` style="background:rgba(59,130,246,.05)"`:'');
+      return `<tr ${rowBg}>
+        <td>${p.sym}${badge}${p.pending?'<span style="font-size:8px;color:var(--yellow);margin-left:4px">ЛИМ</span>':''}</td>
+        <td><span class="${p.dir==='long'?'bl':'bs'}">${p.dir==='long'?'Лонг':'Шорт'}</span> ${p.lev}×</td>
         <td>${typeof p.sz==='number'?p.sz.toFixed(p.sz<1?3:2):p.sz} ${p.un}</td>
         <td>${typeof p.en==='number'?p.en.toFixed(f):p.en}</td><td>${fmtP(curP||71000)}</td>
-        <td class="${g?'pg':'pr'}">${g?'+':''}${p.pnl.toFixed(2)}<br><span style="font-size:9px">(${p.pp.toFixed(1)}%)</span></td>
+        ${pnlCell}
         <td>${typeof p.liq==='number'?fmtP(p.liq):'—'}</td><td>${typeof p.mg==='number'?p.mg.toFixed(2):p.mg}</td>
         <td style="color:var(--accent)">${p.tp}/${p.sl}</td>
-        <td>${p.fromChart?`<button class="ab ab-c" onclick="event.stopPropagation();positionDrawings=[];setBP(document.querySelector('.bp-tab.active'),'pos');drawChart()">Закр.</button>`:`<button class="ab ab-a">Доб.</button><button class="ab ab-c">Закр.</button>`}</td></tr>`;
+        <td>${p.fromChart?`<button class="ab ab-c" onclick="event.stopPropagation();positionDrawings=[];setBP(document.querySelector('.bp-tab.active'),'pos');drawChart()">Отмена</button>`:`<button class="ab ab-a">Доб.</button><button class="ab ab-c">Закр.</button>`}</td></tr>`;
     }).join('')+'</tbody></table>';
   } else if(tab==='ord'){ c.innerHTML='<div style="padding:40px;text-align:center;color:var(--text3)">Нет открытых ордеров</div>';
   } else if(tab==='trd'){ c.innerHTML='<div style="padding:40px;text-align:center;color:var(--text3)">История сделок недоступна без API-ключа</div>';
