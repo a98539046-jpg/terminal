@@ -646,7 +646,7 @@ function connectWS2(){
     const sym = curSym;
     setTimeout(()=>{
       if(sock.readyState===1)
-        sock.send(JSON.stringify({id:`sub_d2_${Date.now()}`, reqType:'sub', dataType:`${sym}@depth20@100ms`}));
+        sock.send(JSON.stringify({id:`sub_d2_${Date.now()}`, reqType:'sub', dataType:`${sym}@@depth5``}));
     }, 200);
   };
   sock.onmessage = async e => {
@@ -695,7 +695,7 @@ function connectWS(){
     const subs = [
       `${sym}@kline_${iv}`,
       `${sym}@trade`,
-      `${sym}@depth20@100ms`,
+      `${sym}@@depth5``,
     ];
     subs.forEach((dataType,i) => {
       setTimeout(()=>{
