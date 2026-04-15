@@ -1981,66 +1981,76 @@ function drawOrderBookWalls(){
       priceTop = wallPrice;
       priceBot = wallIdx+1<filtered.length ? filtered[wallIdx+1][0] : wallPrice*(1-0.0002);
     }
-    // Минимальная высота — 0.06% от цены
     const minRange = wallPrice * 0.0006;
     if(side==='ask' && (priceTop-priceBot)<minRange) priceTop = priceBot + minRange;
     if(side==='bid' && (priceTop-priceBot)<minRange) priceBot = priceTop - minRange;
     return { priceBot, priceTop, qty:wallQty, maxQ };
   }
 
-  // Левая половина = спот, правая = фьючерс
   const halfW = cW / 2;
-  const xLeft  = pad.l;           // начало левой (спот)
-  const xRight = pad.l + halfW;   // начало правой (фьючерс)
+  const xLeft  = pad.l;
+  const xRight = pad.l + halfW;
 
-  // ── ASK стены (сопротивление) → красные ─────────────────────────────────
-  const spotAsk = getBigWall(ST.spot.asks, 'ask');
-  const futAsk  = getBigWall(ST.fut.asks,  'ask');
+  // Рисуем вертикальный разделитель СПОТ | ФЬЮЧ всегда
+  ctx.save();
+  ctx.strokeStyle='rgba(180,180,180,0.12)';
+  ctx.lineWidth=1; ctx.setLineDash([3,4]);
+  ctx.beginPath(); ctx.moveTo(xRight,pad.t); ctx.lineTo(xRight,pad.t+cH); ctx.stroke();
+  ctx.setLineDash([]);
+  // Подписи колонок (маленькие, вверху)
+  ctx.font='7px JetBrains Mono,monospace';
+  ctx.textAlign='center';
+  ctx.fillStyle='rgba(180,180,180,0.25)';
+  ctx.fillText('СПОТ', xLeft+halfW/2, pad.t+10);
+  ctx.fillText('ФЬЮЧ', xRight+halfW/2, pad.t+10);
+  ctx.restore();
 
-  function drawWallRect(wall, xStart, rectW, isAsk){
+  function drawWallRect(wall, xStart, rectW, isAsk, label){
     if(!wall) return;
     const {priceBot,priceTop,qty,maxQ}=wall;
     if(priceBot>mx||priceTop<mn) return;
     const y1=Math.max(toY(priceTop),pad.t);
     const y2=Math.min(toY(priceBot),pad.t+cH);
-    const rh=Math.max(4,y2-y1);
+    const rh=Math.max(6,y2-y1);
     const alpha=Math.min(0.55, 0.2+(qty/maxQ)*0.35);
     ctx.save();
     if(isAsk){
-      // Светло-красный
       ctx.fillStyle=`rgba(255,100,100,${alpha})`;
       ctx.fillRect(xStart,y1,rectW,rh);
-      // Нижняя граница — линия сопротивления
       ctx.strokeStyle=`rgba(255,70,70,${Math.min(0.95,alpha*2)})`;
       ctx.lineWidth=1.5; ctx.setLineDash([]);
       ctx.beginPath(); ctx.moveTo(xStart,y2); ctx.lineTo(xStart+rectW,y2); ctx.stroke();
+      // Объём внутри прямоугольника
+      if(rh>14){
+        const volStr=qty>1000?(qty/1000).toFixed(1)+'K':qty.toFixed(1);
+        ctx.font='bold 8px JetBrains Mono,monospace';
+        ctx.fillStyle=`rgba(255,200,200,0.9)`;
+        ctx.textAlign='center';
+        ctx.fillText(volStr, xStart+rectW/2, y1+rh/2+3);
+      }
     } else {
-      // Светло-зелёный
       ctx.fillStyle=`rgba(0,210,120,${alpha})`;
       ctx.fillRect(xStart,y1,rectW,rh);
-      // Верхняя граница — линия поддержки
       ctx.strokeStyle=`rgba(0,200,100,${Math.min(0.95,alpha*2)})`;
       ctx.lineWidth=1.5; ctx.setLineDash([]);
       ctx.beginPath(); ctx.moveTo(xStart,y1); ctx.lineTo(xStart+rectW,y1); ctx.stroke();
+      if(rh>14){
+        const volStr=qty>1000?(qty/1000).toFixed(1)+'K':qty.toFixed(1);
+        ctx.font='bold 8px JetBrains Mono,monospace';
+        ctx.fillStyle=`rgba(180,255,210,0.9)`;
+        ctx.textAlign='center';
+        ctx.fillText(volStr, xStart+rectW/2, y1+rh/2+3);
+      }
     }
-    // Вертикальный разделитель между спот и фьючерс половинами
-    ctx.strokeStyle='rgba(255,255,255,0.06)';
-    ctx.lineWidth=1; ctx.setLineDash([]);
-    ctx.beginPath(); ctx.moveTo(xRight,pad.t); ctx.lineTo(xRight,pad.t+cH); ctx.stroke();
     ctx.restore();
   }
 
   // ASK: спот слева, фьюч справа
-  drawWallRect(spotAsk, xLeft,  halfW, true);
-  drawWallRect(futAsk,  xRight, halfW, true);
-
-  // ── BID стены (поддержка) → зелёные ─────────────────────────────────────
-  const spotBid = getBigWall(ST.spot.bids, 'bid');
-  const futBid  = getBigWall(ST.fut.bids,  'bid');
-
+  drawWallRect(getBigWall(ST.spot.asks,'ask'), xLeft,  halfW, true,  'СПОТ');
+  drawWallRect(getBigWall(ST.fut.asks, 'ask'), xRight, halfW, true,  'ФЬЮЧ');
   // BID: спот слева, фьюч справа
-  drawWallRect(spotBid, xLeft,  halfW, false);
-  drawWallRect(futBid,  xRight, halfW, false);
+  drawWallRect(getBigWall(ST.spot.bids,'bid'), xLeft,  halfW, false, 'СПОТ');
+  drawWallRect(getBigWall(ST.fut.bids, 'bid'), xRight, halfW, false, 'ФЬЮЧ');
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
