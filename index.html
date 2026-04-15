@@ -1982,6 +1982,10 @@ function drawOrderBookWalls(){
       priceTop = wallPrice;
       priceBot = wallIdx+1<filtered.length ? filtered[wallIdx+1][0] : wallPrice*(1-0.0002);
     }
+    // Минимальная высота зоны — 0.06% от цены, чтобы было видно на любом TF
+    const minRange = wallPrice * 0.0006;
+    if(side==='ask' && (priceTop-priceBot) < minRange) priceTop = priceBot + minRange;
+    if(side==='bid' && (priceTop-priceBot) < minRange) priceBot = priceTop - minRange;
     return { priceBot, priceTop, qty:wallQty, maxQ };
   }
 
@@ -1991,13 +1995,13 @@ function drawOrderBookWalls(){
     const {priceBot,priceTop,qty,maxQ}=futAsk;
     if(priceBot<=mx && priceTop>=mn){
       const y1=Math.max(toY(priceTop),pad.t), y2=Math.min(toY(priceBot),pad.t+cH);
-      const rh=Math.max(2,y2-y1);
-      const alpha=Math.min(0.4, 0.1+(qty/maxQ)*0.3);
+      const rh=Math.max(4,y2-y1);
+      const alpha=Math.min(0.55, 0.2+(qty/maxQ)*0.35);
       ctx.save();
       ctx.fillStyle=`rgba(255,100,100,${alpha})`;
       ctx.fillRect(pad.l,y1,cW,rh);
-      ctx.strokeStyle=`rgba(255,70,70,${Math.min(0.9,alpha*2.5)})`;
-      ctx.lineWidth=1.5; ctx.setLineDash([]);
+      ctx.strokeStyle=`rgba(255,70,70,${Math.min(0.95,alpha*2)})`;
+      ctx.lineWidth=2; ctx.setLineDash([]);
       ctx.beginPath(); ctx.moveTo(pad.l,y2); ctx.lineTo(W-pad.r,y2); ctx.stroke();
       const volStr=qty>1000?(qty/1000).toFixed(1)+'K':qty.toFixed(2);
       ctx.font='bold 8px JetBrains Mono,monospace';
@@ -2013,13 +2017,13 @@ function drawOrderBookWalls(){
     const {priceBot,priceTop,qty,maxQ}=spotBid;
     if(priceBot<=mx && priceTop>=mn){
       const y1=Math.max(toY(priceTop),pad.t), y2=Math.min(toY(priceBot),pad.t+cH);
-      const rh=Math.max(2,y2-y1);
-      const alpha=Math.min(0.4, 0.1+(qty/maxQ)*0.3);
+      const rh=Math.max(4,y2-y1);
+      const alpha=Math.min(0.55, 0.2+(qty/maxQ)*0.35);
       ctx.save();
       ctx.fillStyle=`rgba(0,210,120,${alpha})`;
       ctx.fillRect(pad.l,y1,cW,rh);
-      ctx.strokeStyle=`rgba(0,200,100,${Math.min(0.9,alpha*2.5)})`;
-      ctx.lineWidth=1.5; ctx.setLineDash([]);
+      ctx.strokeStyle=`rgba(0,200,100,${Math.min(0.95,alpha*2)})`;
+      ctx.lineWidth=2; ctx.setLineDash([]);
       ctx.beginPath(); ctx.moveTo(pad.l,y1); ctx.lineTo(W-pad.r,y1); ctx.stroke();
       const volStr=qty>1000?(qty/1000).toFixed(1)+'K':qty.toFixed(2);
       ctx.font='bold 8px JetBrains Mono,monospace';
