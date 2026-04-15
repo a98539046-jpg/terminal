@@ -1967,7 +1967,6 @@ function drawOrderBookWalls(){
     const allQ = arr.map(r=>r[1]);
     const avgQ = allQ.reduce((s,v)=>s+v,0)/allQ.length;
     const maxQ = Math.max(...allQ, 0.001);
-    // Порог: в 2.5 раза больше среднего (достаточно для BTC стакана)
     const threshold = avgQ * 2.5;
     const walls = filtered.filter(r=>r[1]>=threshold);
     if(!walls.length) return null;
@@ -1982,56 +1981,66 @@ function drawOrderBookWalls(){
       priceTop = wallPrice;
       priceBot = wallIdx+1<filtered.length ? filtered[wallIdx+1][0] : wallPrice*(1-0.0002);
     }
-    // Минимальная высота зоны — 0.06% от цены, чтобы было видно на любом TF
+    // Минимальная высота — 0.06% от цены
     const minRange = wallPrice * 0.0006;
-    if(side==='ask' && (priceTop-priceBot) < minRange) priceTop = priceBot + minRange;
-    if(side==='bid' && (priceTop-priceBot) < minRange) priceBot = priceTop - minRange;
+    if(side==='ask' && (priceTop-priceBot)<minRange) priceTop = priceBot + minRange;
+    if(side==='bid' && (priceTop-priceBot)<minRange) priceBot = priceTop - minRange;
     return { priceBot, priceTop, qty:wallQty, maxQ };
   }
 
-  // Фьючерс ASK — над ценой → светло-красный
-  const futAsk = getBigWall(ST.fut.asks, 'ask');
-  if(futAsk){
-    const {priceBot,priceTop,qty,maxQ}=futAsk;
-    if(priceBot<=mx && priceTop>=mn){
-      const y1=Math.max(toY(priceTop),pad.t), y2=Math.min(toY(priceBot),pad.t+cH);
-      const rh=Math.max(4,y2-y1);
-      const alpha=Math.min(0.55, 0.2+(qty/maxQ)*0.35);
-      ctx.save();
+  // Левая половина = спот, правая = фьючерс
+  const halfW = cW / 2;
+  const xLeft  = pad.l;           // начало левой (спот)
+  const xRight = pad.l + halfW;   // начало правой (фьючерс)
+
+  // ── ASK стены (сопротивление) → красные ─────────────────────────────────
+  const spotAsk = getBigWall(ST.spot.asks, 'ask');
+  const futAsk  = getBigWall(ST.fut.asks,  'ask');
+
+  function drawWallRect(wall, xStart, rectW, isAsk){
+    if(!wall) return;
+    const {priceBot,priceTop,qty,maxQ}=wall;
+    if(priceBot>mx||priceTop<mn) return;
+    const y1=Math.max(toY(priceTop),pad.t);
+    const y2=Math.min(toY(priceBot),pad.t+cH);
+    const rh=Math.max(4,y2-y1);
+    const alpha=Math.min(0.55, 0.2+(qty/maxQ)*0.35);
+    ctx.save();
+    if(isAsk){
+      // Светло-красный
       ctx.fillStyle=`rgba(255,100,100,${alpha})`;
-      ctx.fillRect(pad.l,y1,cW,rh);
+      ctx.fillRect(xStart,y1,rectW,rh);
+      // Нижняя граница — линия сопротивления
       ctx.strokeStyle=`rgba(255,70,70,${Math.min(0.95,alpha*2)})`;
-      ctx.lineWidth=2; ctx.setLineDash([]);
-      ctx.beginPath(); ctx.moveTo(pad.l,y2); ctx.lineTo(W-pad.r,y2); ctx.stroke();
-      const volStr=qty>1000?(qty/1000).toFixed(1)+'K':qty.toFixed(2);
-      ctx.font='bold 8px JetBrains Mono,monospace';
-      ctx.fillStyle='rgba(255,150,150,0.95)'; ctx.textAlign='left';
-      ctx.fillText(`🔴 ${volStr}  ${fmtP(priceBot)}–${fmtP(priceTop)}`, pad.l+6, y1>pad.t+14?y1-3:y1+11);
-      ctx.restore();
+      ctx.lineWidth=1.5; ctx.setLineDash([]);
+      ctx.beginPath(); ctx.moveTo(xStart,y2); ctx.lineTo(xStart+rectW,y2); ctx.stroke();
+    } else {
+      // Светло-зелёный
+      ctx.fillStyle=`rgba(0,210,120,${alpha})`;
+      ctx.fillRect(xStart,y1,rectW,rh);
+      // Верхняя граница — линия поддержки
+      ctx.strokeStyle=`rgba(0,200,100,${Math.min(0.95,alpha*2)})`;
+      ctx.lineWidth=1.5; ctx.setLineDash([]);
+      ctx.beginPath(); ctx.moveTo(xStart,y1); ctx.lineTo(xStart+rectW,y1); ctx.stroke();
     }
+    // Вертикальный разделитель между спот и фьючерс половинами
+    ctx.strokeStyle='rgba(255,255,255,0.06)';
+    ctx.lineWidth=1; ctx.setLineDash([]);
+    ctx.beginPath(); ctx.moveTo(xRight,pad.t); ctx.lineTo(xRight,pad.t+cH); ctx.stroke();
+    ctx.restore();
   }
 
-  // Спот BID — под ценой → светло-зелёный
+  // ASK: спот слева, фьюч справа
+  drawWallRect(spotAsk, xLeft,  halfW, true);
+  drawWallRect(futAsk,  xRight, halfW, true);
+
+  // ── BID стены (поддержка) → зелёные ─────────────────────────────────────
   const spotBid = getBigWall(ST.spot.bids, 'bid');
-  if(spotBid){
-    const {priceBot,priceTop,qty,maxQ}=spotBid;
-    if(priceBot<=mx && priceTop>=mn){
-      const y1=Math.max(toY(priceTop),pad.t), y2=Math.min(toY(priceBot),pad.t+cH);
-      const rh=Math.max(4,y2-y1);
-      const alpha=Math.min(0.55, 0.2+(qty/maxQ)*0.35);
-      ctx.save();
-      ctx.fillStyle=`rgba(0,210,120,${alpha})`;
-      ctx.fillRect(pad.l,y1,cW,rh);
-      ctx.strokeStyle=`rgba(0,200,100,${Math.min(0.95,alpha*2)})`;
-      ctx.lineWidth=2; ctx.setLineDash([]);
-      ctx.beginPath(); ctx.moveTo(pad.l,y1); ctx.lineTo(W-pad.r,y1); ctx.stroke();
-      const volStr=qty>1000?(qty/1000).toFixed(1)+'K':qty.toFixed(2);
-      ctx.font='bold 8px JetBrains Mono,monospace';
-      ctx.fillStyle='rgba(0,230,140,0.95)'; ctx.textAlign='left';
-      ctx.fillText(`🟢 ${volStr}  ${fmtP(priceBot)}–${fmtP(priceTop)}`, pad.l+6, y2+11);
-      ctx.restore();
-    }
-  }
+  const futBid  = getBigWall(ST.fut.bids,  'bid');
+
+  // BID: спот слева, фьюч справа
+  drawWallRect(spotBid, xLeft,  halfW, false);
+  drawWallRect(futBid,  xRight, halfW, false);
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
