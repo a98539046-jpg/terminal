@@ -631,7 +631,9 @@ function connectWS(){
     wsOk=true; wsDot('live'); clearTimeout(wsTimer); setSt('');
     const sym = curSym;
     const iv  = TF_INT[tf];
+    // Подписываемся на основной TF + всегда на 1m для живых свечей
     const subs = [`${sym}@kline_${iv}`,`${sym}@trade`,`${sym}@depth5`];
+    if(iv !== '1m') subs.push(`${sym}@kline_1m`);
     subs.forEach((dataType,i) => {
       setTimeout(()=>{
         if(ws && ws.readyState===1)
@@ -696,7 +698,6 @@ function onBingXMsg(d){
     ST[mkt].prevP = p;
     updOPPrice(p);
     calcTQuiet();
-    // Проверяем отложенные ордера
     checkPendingOrders(p);
     if(!ST[mkt]._tc) ST[mkt]._tc=0;
     if(++ST[mkt]._tc % 8 === 0){ updateLevels(); return; }
@@ -721,6 +722,19 @@ function onBingXMsg(d){
     };
     if(!c.t || !c.o) return;
     if(c.c){ ST[mkt].price=c.c; curP=c.c; }
+    // Если это 1m kline (живая минутка) — только обновляем цену текущей свечи
+    const is1mLive = dt.includes('@kline_1m') && TF_INT[tf] !== '1m';
+    if(is1mLive){
+      // Обновляем последнюю свечу текущего TF по живой цене
+      const arr = ST[mkt].candles[tf];
+      if(arr && arr.length && c.c){
+        const lc = arr[arr.length-1];
+        lc.c = c.c; lc.h = Math.max(lc.h, c.c); lc.l = Math.min(lc.l, c.c);
+      }
+      updPLabel(c.c, c.c>=(ST[mkt].prevP||c.c));
+      ST[mkt].prevP=c.c; updOPPrice(c.c); calcTQuiet();
+      schedDraw(); return;
+    }
     const arr = ST[mkt].candles[tf];
     if(arr && arr.length){
       const lc = arr[arr.length-1];
@@ -788,6 +802,27 @@ function buildFetchUrls(directUrl){
 
 async function fetchC(tfk, lim=300){
   setSt('Загрузка BingX…'); setLB(10);
+  // ── Мгновенная загрузка из sessionStorage ──────────────────────────────
+  const cacheKey = `nt_c_${curSym}_${mkt}_${tfk}`;
+  if(!ST[mkt].candles[tfk]){
+    try{
+      const raw = sessionStorage.getItem(cacheKey);
+      if(raw){
+        const cached_ss = JSON.parse(raw);
+        if(cached_ss && cached_ss.length > 10){
+          ST[mkt].candles[tfk] = cached_ss;
+          const last = cached_ss[cached_ss.length-1];
+          if(last && (!curP || Math.abs(curP-last.c)>last.c*0.1)){
+            curP=last.c; ST[mkt].price=last.c;
+            updPLabel(curP,true); updOPPrice(curP);
+          }
+          computeLiq(cached_ss); updateLevels(); drawChart();
+          setSt('⚡ Кэш — обновляем…'); setLB(20);
+        }
+      }
+    }catch(_){}
+  }
+  // ───────────────────────────────────────────────────────────────────────
   const cached = ST[mkt].candles[tfk];
   if(cached && cached.length > 50){ drawChart(); setLB(30); }
   const iv = TF_INT[tfk];
@@ -833,6 +868,8 @@ async function fetchC(tfk, lim=300){
       }
     }
     setLB(100); setTimeout(()=>{ setLB(0); setSt(''); }, 600);
+    // Сохраняем в sessionStorage для мгновенной загрузки в следующий раз
+    try{ sessionStorage.setItem(cacheKey, JSON.stringify(arr.slice(-300))); }catch(_){}
     computeLiq(arr); updateLevels(); drawChart();
   } else {
     if(cached && cached.length){
@@ -1203,6 +1240,7 @@ function drawChart(){
       ctx.restore();
     });
   }
+  drawOrderBookWalls();
   drawUserObjects();
   if(positionDrawings.length) drawPositions();
   if(curP){
@@ -1447,42 +1485,6 @@ function buildLiqMap(side){
   }
   schedDraw();
 }
-function _buildLiqMap_OLD(side){
-  const isLong = side==='long';
-  const p = curP || (()=>{const cs=ST[mkt].candles[tf];return cs?.length?cs[cs.length-1].c:0;})();
-  if(!p) return;
-  const cs=ST[mkt].candles[tf];
-  if(!cs||cs.length<10) return;
-  liqMapZones=[];
-  const levels=[];
-  const perDay=Math.round(86400000/TF_MS[tf]);
-  const day=cs.slice(-Math.max(perDay,1));
-  const week=cs.slice(-Math.min(Math.round(604800000/TF_MS[tf]),cs.length));
-  if(isLong){ levels.push({p:Math.max(...day.map(c=>c.h)),label:'H24'}); levels.push({p:Math.max(...week.map(c=>c.h)),label:'H7d'}); }
-  else { levels.push({p:Math.min(...day.map(c=>c.l)),label:'L24'}); levels.push({p:Math.min(...week.map(c=>c.l)),label:'L7d'}); }
-  const vis=cs.slice(-100);
-  const swings=[];
-  for(let i=3;i<vis.length-3;i++){
-    const c=vis[i];
-    if(isLong){ if([vis[i-1],vis[i-2],vis[i-3],vis[i+1],vis[i+2],vis[i+3]].every(x=>c.h>=x.h)) swings.push({p:c.h,vol:c.v,label:'SH'}); }
-    else { if([vis[i-1],vis[i-2],vis[i-3],vis[i+1],vis[i+2],vis[i+3]].every(x=>c.l<=x.l)) swings.push({p:c.l,vol:c.v,label:'SL'}); }
-  }
-  swings.sort((a,b)=>b.vol-a.vol).slice(0,5).forEach(l=>levels.push(l));
-  const step=p<5000?500:p<20000?1000:p<50000?2000:5000;
-  for(let d=1;d<=4;d++){
-    const lp=Math.round(p/step)*step + (isLong?d:-d)*step;
-    if(lp>0) levels.push({p:lp,label:fmtP(lp)});
-  }
-  const bandwidth=p*0.012;
-  const filtered=levels.filter(lv=>{ const dist=(lv.p-p)/p*100; return isLong?(dist>0.3&&dist<12):(dist<-0.3&&dist>-12); }).sort((a,b)=>isLong?a.p-b.p:b.p-a.p);
-  const uniq=[];
-  filtered.forEach(lv=>{ if(!uniq.some(u=>Math.abs(u.p-lv.p)/p<0.012)) uniq.push(lv); });
-  uniq.slice(0,5).forEach(lv=>{
-    const dist=(lv.p-p)/p*100;
-    liqMapZones.push({price:lv.p,top:isLong?lv.p+bandwidth:lv.p,bot:isLong?lv.p:lv.p-bandwidth,label:lv.label,dist:(dist>0?'+':'')+dist.toFixed(1)+'%'});
-  });
-  schedDraw();
-}
 
 function togLiq(el){showLiq=!showLiq;el.classList.toggle('active',showLiq);document.getElementById('liqLeg').style.display=showLiq?'flex':'none';drawChart();}
 function togStop(el){showStop=!showStop;el.classList.toggle('active',showStop);drawChart();}
@@ -1514,8 +1516,8 @@ function setSym(sym,label){
   ST.spot.candles={}; ST.spot.price=0; ST.spot.asks=[]; ST.spot.bids=[];
   ST.fut.candles={};  ST.fut.price=0;  ST.fut.asks=[];  ST.fut.bids=[];
   curP=0; visOffset=0; visCount=120; positionDrawings=[]; liqMapZones=[];
+  const _opP=document.getElementById('opP'); if(_opP){_opP.dataset.e='';_opP.value='—';}
   computedLevels=[]; liqLevels=[]; obHistory=[]; bigWalls=[]; _obHash='';
-  const _opP=document.getElementById('opP'); if(_opP) { _opP.dataset.e=''; _opP.value='—'; }
   ['tbPrice','tbChange','tbHigh','tbLow','tbVol'].forEach(id=>{ const el=document.getElementById(id); if(el) el.textContent='—'; });
   ['sAsks','sBids','fAsks','fBids'].forEach(id=>{ const el=document.getElementById(id); if(el) el.innerHTML=''; });
   document.getElementById('sMidP').textContent='—'; document.getElementById('fMidP').textContent='—';
@@ -1745,7 +1747,6 @@ mainC.addEventListener('click',e=>{
   if(activeTool==='long'||activeTool==='short'){
     const isLong=activeTool==='long';
     const tp=isLong?p*1.03:p*0.97, sl=isLong?p*0.98:p*1.02;
-    // Создаём отложенный ордер (pending) — не позиция, ждём касания
     positionDrawings=[{entry:p,tp,sl,side:activeTool,id:Date.now(),pending:true}];
     const activeTab=document.querySelector('.bp-tab.active');
     if(activeTab) setBP(activeTab,'pos');
@@ -1761,11 +1762,7 @@ function updPLabel(p,up){
   const lb=document.getElementById('pLabel');
   lb.style.background=up?'#00c896':'#ff4466';lb.style.color=up?'#000':'#fff';lb.textContent=fmtP(p);
 }
-function updOPPrice(p){
-  const el=document.getElementById('opP');
-  if(el.disabled) return; // режим Рынок — поле заблокировано, не трогаем
-  if(!el.dataset.e) el.value=fmtP(p); // лимит — обновляем только если пользователь не редактировал
-}
+function updOPPrice(p){ const el=document.getElementById('opP'); if(el.disabled) return; if(!el.dataset.e) el.value=fmtP(p); }
 function calcTQuiet(){
   const q=+document.getElementById('opQ').value||0, p=curP||71000;
   document.getElementById('opT').value=fmtN(q*p);
@@ -1971,6 +1968,93 @@ function drawOBHeatmap(){
   });
 }
 
+// ─── СТЕНЫ ИЗ СТАКАНА НА ГРАФИКЕ ────────────────────────────────────────────
+function drawOrderBookWalls(){
+  if(!CM||!CM.rng||!showLiq) return;
+  const {pad,W,cW,toY,cH,mn,mx} = CM;
+  const p = curP;
+  if(!p) return;
+
+  // Определяем порог "большой стены" — топ-1 по объёму с каждой стороны
+  function getBigWall(arr, side){
+    if(!arr || arr.length < 2) return null;
+    const filtered = side==='ask' ? arr.filter(r=>r[0]>p) : arr.filter(r=>r[0]<p);
+    if(!filtered.length) return null;
+    const allQ = arr.map(r=>r[1]);
+    const avgQ = allQ.reduce((s,v)=>s+v,0)/allQ.length;
+    const threshold = avgQ * 4; // стена = в 4 раза больше среднего
+    const walls = filtered.filter(r=>r[1]>=threshold);
+    if(!walls.length) return null;
+    // Берём самую крупную стену
+    return walls.reduce((a,b)=>b[1]>a[1]?b:a);
+  }
+
+  // Фьючерсная стена ASK (сопротивление — над ценой) → светло-красный
+  const futAsk = getBigWall(ST.fut.asks, 'ask');
+  if(futAsk){
+    const wp = futAsk[0];
+    const wq = futAsk[1];
+    // Высота прямоугольника — пропорциональна объёму (мин 0.05% от цены)
+    const allQ = (ST.fut.asks||[]).map(r=>r[1]);
+    const maxQ = Math.max(...allQ, 0.001);
+    const heightPct = 0.0005 + (wq/maxQ)*0.003; // от 0.05% до 0.35%
+    const wallTop = wp + p*heightPct;
+    const wallBot = wp;
+    if(wp >= mn && wp <= mx){
+      const y1 = Math.max(toY(wallTop), pad.t);
+      const y2 = Math.min(toY(wallBot), pad.t+cH);
+      const rh = Math.max(3, y2-y1);
+      // Прозрачность зависит от размера стены
+      const alpha = Math.min(0.45, 0.15 + (wq/maxQ)*0.3);
+      ctx.save();
+      ctx.fillStyle = `rgba(255,80,80,${alpha})`;
+      ctx.fillRect(pad.l, y1, cW, rh);
+      ctx.strokeStyle = `rgba(255,80,80,${Math.min(0.9, alpha*2)})`;
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(pad.l,y1); ctx.lineTo(W-pad.r,y1); ctx.stroke();
+      // Подпись
+      const volStr = wq>1000?(wq/1000).toFixed(1)+'K':wq.toFixed(1);
+      ctx.font = 'bold 8px JetBrains Mono,monospace';
+      ctx.fillStyle = `rgba(255,120,120,0.95)`;
+      ctx.textAlign = 'left';
+      ctx.fillText(`🔴 СТЕНА ${volStr} (фьюч)`, pad.l+6, y1-3);
+      ctx.restore();
+    }
+  }
+
+  // Спотовая стена BID (поддержка — под ценой) → светло-зелёный
+  const spotBid = getBigWall(ST.spot.bids, 'bid');
+  if(spotBid){
+    const wp = spotBid[0];
+    const wq = spotBid[1];
+    const allQ = (ST.spot.bids||[]).map(r=>r[1]);
+    const maxQ = Math.max(...allQ, 0.001);
+    const heightPct = 0.0005 + (wq/maxQ)*0.003;
+    const wallTop = wp;
+    const wallBot = wp - p*heightPct;
+    if(wp >= mn && wp <= mx){
+      const y1 = Math.max(toY(wallTop), pad.t);
+      const y2 = Math.min(toY(wallBot), pad.t+cH);
+      const rh = Math.max(3, y2-y1);
+      const alpha = Math.min(0.45, 0.15 + (wq/maxQ)*0.3);
+      ctx.save();
+      ctx.fillStyle = `rgba(0,200,120,${alpha})`;
+      ctx.fillRect(pad.l, y1, cW, rh);
+      ctx.strokeStyle = `rgba(0,200,120,${Math.min(0.9, alpha*2)})`;
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(pad.l,y2); ctx.lineTo(W-pad.r,y2); ctx.stroke();
+      // Подпись
+      const volStr = wq>1000?(wq/1000).toFixed(1)+'K':wq.toFixed(1);
+      ctx.font = 'bold 8px JetBrains Mono,monospace';
+      ctx.fillStyle = `rgba(0,220,140,0.95)`;
+      ctx.textAlign = 'left';
+      ctx.fillText(`🟢 СТЕНА ${volStr} (спот)`, pad.l+6, y2+10);
+      ctx.restore();
+    }
+  }
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 function drawUserObjects(){
   if(!CM||!CM.rng) return;
   ctx.save();
@@ -2100,13 +2184,11 @@ function checkPendingOrders(price){
   positionDrawings.forEach(pos=>{
     if(!pos.pending) return;
     const isLong=pos.side==='long';
-    // Ордер срабатывает когда цена достигает уровня entry
     const triggered = isLong ? price <= pos.entry : price >= pos.entry;
     if(triggered){
       pos.pending=false;
-      pos.entry=price; // фиксируем точную цену срабатывания
+      pos.entry=price;
       changed=true;
-      // Уведомление
       const col=isLong?'#00c896':'#ff4466';
       const lbl=isLong?'▲ Лонг сработал @ ':'▼ Шорт сработал @ ';
       const t=document.createElement('div');
@@ -2117,7 +2199,6 @@ function checkPendingOrders(price){
   });
   if(changed){ const at=document.querySelector('.bp-tab.active'); if(at) setBP(at,'pos'); schedDraw(); }
 }
-
 
 function drawPositions(){
   if(!positionDrawings.length||!CM.rng) return;
@@ -2130,7 +2211,7 @@ function drawPositions(){
     ctx.save();
     const line=(y,col,lw,dash=[])=>{ ctx.strokeStyle=col; ctx.lineWidth=lw; ctx.setLineDash(dash); ctx.beginPath(); ctx.moveTo(pad.l,clamp(y)); ctx.lineTo(W-pad.r,clamp(y)); ctx.stroke(); ctx.setLineDash([]); };
     if(pos.pending){
-      // Отложенный ордер: только линия входа пунктиром, нет P&L
+      // Отложенный ордер: пунктирная линия, нет P&L
       line(yEntry,entryCol,1.5,[4,4]);
       const y=clamp(yEntry);
       const pendingTxt=(isLong?'▲ ЛИМИТ (ожидание)  ':'▼ ЛИМИТ (ожидание)  ')+fmtP(pos.entry);
@@ -2148,27 +2229,27 @@ function drawPositions(){
     } else {
       line(yTP,'#00c896',1.5,[6,3]); line(yEntry,entryCol,1.5); line(ySL,'#ff4466',1.5,[6,3]);
       const pct=+(document.getElementById('posSizePct')?.value||10)/100, avail=12450, margin=avail*pct, qty=margin*lev/(pos.entry||1), dir=isLong?1:-1;
-    const pTP=((pos.tp-pos.entry)*qty*dir), pSL=((pos.sl-pos.entry)*qty*dir), rr=Math.abs((pos.tp-pos.entry)/(pos.sl-pos.entry||1));
-    const badge=(rawY,label,price,bg,pnl)=>{
-      const y=clamp(rawY);
-      const pnlStr=pnl!==undefined?'  '+(pnl>=0?'+':'')+fmtN(pnl)+'U':'';
-      const rrStr=label==='ENT'?'  R:R '+rr.toFixed(1):'';
-      const txt=label+' '+fmtP(price)+pnlStr+rrStr;
-      ctx.font='bold 8px JetBrains Mono,monospace';
-      const tw=ctx.measureText(txt).width, bw=tw+8, bh=14, bx=W-pad.r-bw-3;
-      ctx.fillStyle=bg; ctx.fillRect(bx,y-bh/2,bw,bh);
-      const tagW=ctx.measureText(label).width+6; ctx.fillRect(W-pad.r+1,y-6,tagW,12);
-      ctx.fillStyle='#fff'; ctx.textAlign='left'; ctx.fillText(txt,bx+4,y+4);
-      ctx.fillStyle='#000'; ctx.fillText(label,W-pad.r+4,y+4);
-    };
-    badge(yTP,'TP',pos.tp,GREEN+'0.9)',pTP); badge(yEntry,'ENT',pos.entry,entryCol+'bb',undefined); badge(ySL,'SL',pos.sl,RED+'0.9)',pSL);
-    const delX=pad.l+4, delY=clamp(yEntry)-7;
-    ctx.fillStyle='rgba(22,26,34,.95)'; ctx.fillRect(delX,delY,16,13);
-    ctx.strokeStyle='#4a5a7a'; ctx.lineWidth=.5; ctx.strokeRect(delX,delY,16,13);
-    ctx.fillStyle='#c8d4e8'; ctx.font='bold 10px monospace'; ctx.textAlign='center';
-    ctx.fillText('×',delX+8,delY+10);
-    pos._delBtn={x:delX,y:delY,w:16,h:13};
-    } // end else (active position)
+      const pTP=((pos.tp-pos.entry)*qty*dir), pSL=((pos.sl-pos.entry)*qty*dir), rr=Math.abs((pos.tp-pos.entry)/(pos.sl-pos.entry||1));
+      const badge=(rawY,label,price,bg,pnl)=>{
+        const y=clamp(rawY);
+        const pnlStr=pnl!==undefined?'  '+(pnl>=0?'+':'')+fmtN(pnl)+'U':'';
+        const rrStr=label==='ENT'?'  R:R '+rr.toFixed(1):'';
+        const txt=label+' '+fmtP(price)+pnlStr+rrStr;
+        ctx.font='bold 8px JetBrains Mono,monospace';
+        const tw=ctx.measureText(txt).width, bw=tw+8, bh=14, bx=W-pad.r-bw-3;
+        ctx.fillStyle=bg; ctx.fillRect(bx,y-bh/2,bw,bh);
+        const tagW=ctx.measureText(label).width+6; ctx.fillRect(W-pad.r+1,y-6,tagW,12);
+        ctx.fillStyle='#fff'; ctx.textAlign='left'; ctx.fillText(txt,bx+4,y+4);
+        ctx.fillStyle='#000'; ctx.fillText(label,W-pad.r+4,y+4);
+      };
+      badge(yTP,'TP',pos.tp,GREEN+'0.9)',pTP); badge(yEntry,'ENT',pos.entry,entryCol+'bb',undefined); badge(ySL,'SL',pos.sl,RED+'0.9)',pSL);
+      const delX=pad.l+4, delY=clamp(yEntry)-7;
+      ctx.fillStyle='rgba(22,26,34,.95)'; ctx.fillRect(delX,delY,16,13);
+      ctx.strokeStyle='#4a5a7a'; ctx.lineWidth=.5; ctx.strokeRect(delX,delY,16,13);
+      ctx.fillStyle='#c8d4e8'; ctx.font='bold 10px monospace'; ctx.textAlign='center';
+      ctx.fillText('×',delX+8,delY+10);
+      pos._delBtn={x:delX,y:delY,w:16,h:13};
+    }
     ctx.restore();
   });
 }
@@ -2196,7 +2277,7 @@ function setBP(el,tab){
       const pnlCell = p.pending
         ? `<td style="color:var(--text3);font-style:italic">⏳ ожидание</td>`
         : `<td class="${g?'pg':'pr'}">${g?'+':''}${p.pnl.toFixed(2)}<br><span style="font-size:9px">(${p.pp.toFixed(1)}%)</span></td>`;
-      const rowBg = p.pending ? `style="background:rgba(245,166,35,.04)"` : (p.fromChart?` style="background:rgba(59,130,246,.05)"`:'');
+      const rowBg = p.pending?`style="background:rgba(245,166,35,.04)"`:(p.fromChart?`style="background:rgba(59,130,246,.05)"`:'');
       return `<tr ${rowBg}>
         <td>${p.sym}${badge}${p.pending?'<span style="font-size:8px;color:var(--yellow);margin-left:4px">ЛИМ</span>':''}</td>
         <td><span class="${p.dir==='long'?'bl':'bs'}">${p.dir==='long'?'Лонг':'Шорт'}</span> ${p.lev}×</td>
