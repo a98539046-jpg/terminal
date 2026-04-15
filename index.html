@@ -1988,69 +1988,82 @@ function drawOrderBookWalls(){
   }
 
   const halfW = cW / 2;
-  const xLeft  = pad.l;
-  const xRight = pad.l + halfW;
+  const xLeft  = pad.l;            // СПОТ — левая половина
+  const xRight = pad.l + halfW;    // ФЬЮЧ — правая половина
+  const xDiv   = xRight;           // граница между половинами
 
-  // Рисуем вертикальный разделитель СПОТ | ФЬЮЧ всегда
+  // Всегда рисуем разделитель посередине графика
   ctx.save();
-  ctx.strokeStyle='rgba(180,180,180,0.12)';
-  ctx.lineWidth=1; ctx.setLineDash([3,4]);
-  ctx.beginPath(); ctx.moveTo(xRight,pad.t); ctx.lineTo(xRight,pad.t+cH); ctx.stroke();
+  ctx.strokeStyle = 'rgba(200,200,200,0.15)';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4,5]);
+  ctx.beginPath(); ctx.moveTo(xDiv, pad.t); ctx.lineTo(xDiv, pad.t+cH); ctx.stroke();
   ctx.setLineDash([]);
-  // Подписи колонок (маленькие, вверху)
-  ctx.font='7px JetBrains Mono,monospace';
-  ctx.textAlign='center';
-  ctx.fillStyle='rgba(180,180,180,0.25)';
-  ctx.fillText('СПОТ', xLeft+halfW/2, pad.t+10);
-  ctx.fillText('ФЬЮЧ', xRight+halfW/2, pad.t+10);
+  ctx.font = '7px JetBrains Mono,monospace';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(200,200,200,0.2)';
+  ctx.fillText('СПОТ', xLeft+halfW/2, pad.t+9);
+  ctx.fillText('ФЬЮЧ', xRight+halfW/2, pad.t+9);
   ctx.restore();
 
-  function drawWallRect(wall, xStart, rectW, isAsk, label){
+  // isAsk: true=красный(ASK), false=зелёный(BID)
+  // isSpot: true=спот(светлее), false=фьюч(насыщеннее)
+  function drawHalf(wall, xStart, rectW, isAsk, isSpot){
     if(!wall) return;
     const {priceBot,priceTop,qty,maxQ}=wall;
     if(priceBot>mx||priceTop<mn) return;
-    const y1=Math.max(toY(priceTop),pad.t);
-    const y2=Math.min(toY(priceBot),pad.t+cH);
-    const rh=Math.max(6,y2-y1);
-    const alpha=Math.min(0.55, 0.2+(qty/maxQ)*0.35);
+    const y1 = Math.max(toY(priceTop), pad.t);
+    const y2 = Math.min(toY(priceBot), pad.t+cH);
+    const rh = Math.max(6, y2-y1);
+    const alpha = Math.min(0.6, 0.18+(qty/maxQ)*0.42);
+    // Спот — светлее, фьюч — чуть темнее/насыщеннее
+    const aSpot = isSpot ? alpha*0.7 : alpha;
     ctx.save();
     if(isAsk){
-      ctx.fillStyle=`rgba(255,100,100,${alpha})`;
-      ctx.fillRect(xStart,y1,rectW,rh);
-      ctx.strokeStyle=`rgba(255,70,70,${Math.min(0.95,alpha*2)})`;
-      ctx.lineWidth=1.5; ctx.setLineDash([]);
+      // Красный: спот светло-розовый, фьюч насыщеннее
+      ctx.fillStyle = isSpot
+        ? `rgba(255,140,140,${aSpot})`
+        : `rgba(220,50,50,${aSpot})`;
+      ctx.fillRect(xStart, y1, rectW, rh);
+      // Нижняя граница (уровень сопротивления)
+      ctx.strokeStyle = isSpot
+        ? `rgba(255,120,120,${Math.min(0.9,aSpot*2)})`
+        : `rgba(220,50,50,${Math.min(0.9,aSpot*2)})`;
+      ctx.lineWidth = isSpot ? 1 : 1.5;
       ctx.beginPath(); ctx.moveTo(xStart,y2); ctx.lineTo(xStart+rectW,y2); ctx.stroke();
-      // Объём внутри прямоугольника
-      if(rh>14){
-        const volStr=qty>1000?(qty/1000).toFixed(1)+'K':qty.toFixed(1);
-        ctx.font='bold 8px JetBrains Mono,monospace';
-        ctx.fillStyle=`rgba(255,200,200,0.9)`;
-        ctx.textAlign='center';
-        ctx.fillText(volStr, xStart+rectW/2, y1+rh/2+3);
-      }
     } else {
-      ctx.fillStyle=`rgba(0,210,120,${alpha})`;
-      ctx.fillRect(xStart,y1,rectW,rh);
-      ctx.strokeStyle=`rgba(0,200,100,${Math.min(0.95,alpha*2)})`;
-      ctx.lineWidth=1.5; ctx.setLineDash([]);
+      // Зелёный: спот светло-мятный, фьюч насыщеннее
+      ctx.fillStyle = isSpot
+        ? `rgba(100,230,160,${aSpot})`
+        : `rgba(0,180,90,${aSpot})`;
+      ctx.fillRect(xStart, y1, rectW, rh);
+      // Верхняя граница (уровень поддержки)
+      ctx.strokeStyle = isSpot
+        ? `rgba(100,230,160,${Math.min(0.9,aSpot*2)})`
+        : `rgba(0,180,90,${Math.min(0.9,aSpot*2)})`;
+      ctx.lineWidth = isSpot ? 1 : 1.5;
       ctx.beginPath(); ctx.moveTo(xStart,y1); ctx.lineTo(xStart+rectW,y1); ctx.stroke();
-      if(rh>14){
-        const volStr=qty>1000?(qty/1000).toFixed(1)+'K':qty.toFixed(1);
-        ctx.font='bold 8px JetBrains Mono,monospace';
-        ctx.fillStyle=`rgba(180,255,210,0.9)`;
-        ctx.textAlign='center';
-        ctx.fillText(volStr, xStart+rectW/2, y1+rh/2+3);
-      }
+    }
+    // Объём внутри если прямоугольник достаточно высокий
+    if(rh > 16){
+      const volStr = qty>1000?(qty/1000).toFixed(1)+'K':qty.toFixed(1);
+      ctx.font = 'bold 8px JetBrains Mono,monospace';
+      ctx.fillStyle = isAsk
+        ? (isSpot?'rgba(255,220,220,0.95)':'rgba(255,200,200,0.95)')
+        : (isSpot?'rgba(200,255,220,0.95)':'rgba(180,255,210,0.95)');
+      ctx.textAlign = 'center';
+      ctx.fillText(volStr, xStart+rectW/2, y1+rh/2+3);
     }
     ctx.restore();
   }
 
-  // ASK: спот слева, фьюч справа
-  drawWallRect(getBigWall(ST.spot.asks,'ask'), xLeft,  halfW, true,  'СПОТ');
-  drawWallRect(getBigWall(ST.fut.asks, 'ask'), xRight, halfW, true,  'ФЬЮЧ');
-  // BID: спот слева, фьюч справа
-  drawWallRect(getBigWall(ST.spot.bids,'bid'), xLeft,  halfW, false, 'СПОТ');
-  drawWallRect(getBigWall(ST.fut.bids, 'bid'), xRight, halfW, false, 'ФЬЮЧ');
+  // ASK стены (красные, над ценой)
+  drawHalf(getBigWall(ST.spot.asks,'ask'), xLeft,  halfW, true,  true);   // спот слева
+  drawHalf(getBigWall(ST.fut.asks, 'ask'), xRight, halfW, true,  false);  // фьюч справа
+
+  // BID стены (зелёные, под ценой)
+  drawHalf(getBigWall(ST.spot.bids,'bid'), xLeft,  halfW, false, true);   // спот слева
+  drawHalf(getBigWall(ST.fut.bids, 'bid'), xRight, halfW, false, false);  // фьюч справа
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
