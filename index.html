@@ -1390,24 +1390,8 @@ function setTool(tool,el){
 let liqMapZones=[];
 
 function buildLiqMap(side){
-  const isLong = side==='long';
-  const p = curP || (()=>{const cs=ST[mkt].candles[tf];return cs?.length?cs[cs.length-1].c:0;})();
-  if(!p) return;
-  const cs=ST[mkt].candles[tf];
-  if(!cs||cs.length<10) return;
   liqMapZones=[];
-  const week=cs.slice(-Math.min(Math.round(604800000/TF_MS[tf]),cs.length));
-  const bandwidth=p*0.015;
-  if(isLong){
-    const l7d=Math.min(...week.map(c=>c.l));
-    const dist=(l7d-p)/p*100;
-    liqMapZones.push({price:l7d,top:l7d,bot:l7d-bandwidth,label:'L7d',dist:(dist>0?'+':'')+dist.toFixed(1)+'%'});
-  } else {
-    const h7d=Math.max(...week.map(c=>c.h));
-    const dist=(h7d-p)/p*100;
-    liqMapZones.push({price:h7d,top:h7d+bandwidth,bot:h7d,label:'H7d',dist:(dist>0?'+':'')+dist.toFixed(1)+'%'});
-  }
-  schedDraw();
+  // Фиолетовые зоны отключены
 }
 
 function togLiq(el){showLiq=!showLiq;el.classList.toggle('active',showLiq);document.getElementById('liqLeg').style.display=showLiq?'flex':'none';drawChart();}
