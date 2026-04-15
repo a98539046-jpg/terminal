@@ -631,7 +631,6 @@ function connectWS(){
     wsOk=true; wsDot('live'); clearTimeout(wsTimer); setSt('');
     const sym = curSym;
     const iv  = TF_INT[tf];
-    // Подписываемся на основной TF + всегда на 1m для живых свечей
     const subs = [`${sym}@kline_${iv}`,`${sym}@trade`,`${sym}@depth5`];
     if(iv !== '1m') subs.push(`${sym}@kline_1m`);
     subs.forEach((dataType,i) => {
@@ -722,14 +721,13 @@ function onBingXMsg(d){
     };
     if(!c.t || !c.o) return;
     if(c.c){ ST[mkt].price=c.c; curP=c.c; }
-    // Если это 1m kline (живая минутка) — только обновляем цену текущей свечи
+    // Живая 1m свеча — обновляем только текущую свечу основного TF
     const is1mLive = dt.includes('@kline_1m') && TF_INT[tf] !== '1m';
     if(is1mLive){
-      // Обновляем последнюю свечу текущего TF по живой цене
       const arr = ST[mkt].candles[tf];
       if(arr && arr.length && c.c){
         const lc = arr[arr.length-1];
-        lc.c = c.c; lc.h = Math.max(lc.h, c.c); lc.l = Math.min(lc.l, c.c);
+        lc.c=c.c; lc.h=Math.max(lc.h,c.c); lc.l=Math.min(lc.l,c.c);
       }
       updPLabel(c.c, c.c>=(ST[mkt].prevP||c.c));
       ST[mkt].prevP=c.c; updOPPrice(c.c); calcTQuiet();
@@ -802,27 +800,13 @@ function buildFetchUrls(directUrl){
 
 async function fetchC(tfk, lim=300){
   setSt('Загрузка BingX…'); setLB(10);
-  // ── Мгновенная загрузка из sessionStorage ──────────────────────────────
   const cacheKey = `nt_c_${curSym}_${mkt}_${tfk}`;
   if(!ST[mkt].candles[tfk]){
     try{
       const raw = sessionStorage.getItem(cacheKey);
-      if(raw){
-        const cached_ss = JSON.parse(raw);
-        if(cached_ss && cached_ss.length > 10){
-          ST[mkt].candles[tfk] = cached_ss;
-          const last = cached_ss[cached_ss.length-1];
-          if(last && (!curP || Math.abs(curP-last.c)>last.c*0.1)){
-            curP=last.c; ST[mkt].price=last.c;
-            updPLabel(curP,true); updOPPrice(curP);
-          }
-          computeLiq(cached_ss); updateLevels(); drawChart();
-          setSt('⚡ Кэш — обновляем…'); setLB(20);
-        }
-      }
+      if(raw){ const ss=JSON.parse(raw); if(ss&&ss.length>10){ ST[mkt].candles[tfk]=ss; const last=ss[ss.length-1]; if(last&&(!curP||Math.abs(curP-last.c)>last.c*0.1)){curP=last.c;ST[mkt].price=last.c;updPLabel(curP,true);updOPPrice(curP);} computeLiq(ss);updateLevels();drawChart();setSt('⚡ Кэш…');setLB(20); } }
     }catch(_){}
   }
-  // ───────────────────────────────────────────────────────────────────────
   const cached = ST[mkt].candles[tfk];
   if(cached && cached.length > 50){ drawChart(); setLB(30); }
   const iv = TF_INT[tfk];
@@ -868,8 +852,7 @@ async function fetchC(tfk, lim=300){
       }
     }
     setLB(100); setTimeout(()=>{ setLB(0); setSt(''); }, 600);
-    // Сохраняем в sessionStorage для мгновенной загрузки в следующий раз
-    try{ sessionStorage.setItem(cacheKey, JSON.stringify(arr.slice(-300))); }catch(_){}
+    try{sessionStorage.setItem(cacheKey,JSON.stringify(arr.slice(-300)));}catch(_){}
     computeLiq(arr); updateLevels(); drawChart();
   } else {
     if(cached && cached.length){
@@ -1968,113 +1951,80 @@ function drawOBHeatmap(){
   });
 }
 
+
 // ─── СТЕНЫ ИЗ СТАКАНА НА ГРАФИКЕ ────────────────────────────────────────────
 function drawOrderBookWalls(){
   if(!CM||!CM.rng||!showLiq) return;
   const {pad,W,cW,toY,cH,mn,mx} = CM;
-  const p = curP;
-  if(!p) return;
+  const p = curP; if(!p) return;
 
-  // Находим крупную стену и её реальный ценовой диапазон из стакана
-  // arr — массив [price, qty], side — 'ask' или 'bid'
-  // Возвращает { priceBot, priceTop, qty, maxQ } или null
   function getBigWall(arr, side){
-    if(!arr || arr.length < 2) return null;
-    // Фильтруем только нужную сторону от текущей цены
+    if(!arr||arr.length<2) return null;
     const filtered = side==='ask'
-      ? arr.filter(r=>r[0]>p).sort((a,b)=>a[0]-b[0])  // asks: от нижнего к верхнему
-      : arr.filter(r=>r[0]<p).sort((a,b)=>b[0]-a[0]);  // bids: от верхнего к нижнему
-    if(filtered.length < 1) return null;
-
+      ? arr.filter(r=>r[0]>p).sort((a,b)=>a[0]-b[0])
+      : arr.filter(r=>r[0]<p).sort((a,b)=>b[0]-a[0]);
+    if(!filtered.length) return null;
     const allQ = arr.map(r=>r[1]);
     const avgQ = allQ.reduce((s,v)=>s+v,0)/allQ.length;
     const maxQ = Math.max(...allQ, 0.001);
-    const threshold = avgQ * 4; // стена = в 4 раза больше среднего
-
-    // Ищем самую крупную стену
+    // Порог: в 2.5 раза больше среднего (достаточно для BTC стакана)
+    const threshold = avgQ * 2.5;
     const walls = filtered.filter(r=>r[1]>=threshold);
     if(!walls.length) return null;
     const wall = walls.reduce((a,b)=>b[1]>a[1]?b:a);
-    const wallPrice = wall[0];
-    const wallQty = wall[1];
-
-    // Реальный диапазон: от цены стены до следующего уровня в стакане
+    const wallPrice = wall[0], wallQty = wall[1];
     const wallIdx = filtered.findIndex(r=>r[0]===wallPrice);
     let priceBot, priceTop;
     if(side==='ask'){
-      // ASK: стена снизу-вверх
       priceBot = wallPrice;
-      // Верхняя граница = следующий уровень в стакане или +тик
-      priceTop = wallIdx+1 < filtered.length
-        ? filtered[wallIdx+1][0]
-        : wallPrice + wallPrice*0.0002;
+      priceTop = wallIdx+1<filtered.length ? filtered[wallIdx+1][0] : wallPrice*(1+0.0002);
     } else {
-      // BID: стена сверху-вниз
       priceTop = wallPrice;
-      // Нижняя граница = следующий уровень вниз или -тик
-      priceBot = wallIdx+1 < filtered.length
-        ? filtered[wallIdx+1][0]
-        : wallPrice - wallPrice*0.0002;
+      priceBot = wallIdx+1<filtered.length ? filtered[wallIdx+1][0] : wallPrice*(1-0.0002);
     }
-    return { priceBot, priceTop, qty: wallQty, maxQ };
+    return { priceBot, priceTop, qty:wallQty, maxQ };
   }
 
-  // ── Фьючерсная ASK-стена над ценой → СВЕТЛО-КРАСНЫЙ прямоугольник ──────────
+  // Фьючерс ASK — над ценой → светло-красный
   const futAsk = getBigWall(ST.fut.asks, 'ask');
   if(futAsk){
-    const { priceBot, priceTop, qty, maxQ } = futAsk;
-    // Рисуем только если стена видна на графике
-    if(priceBot <= mx && priceTop >= mn){
-      const y1 = Math.max(toY(priceTop), pad.t);       // верх прямоугольника
-      const y2 = Math.min(toY(priceBot), pad.t+cH);    // низ прямоугольника
-      const rh = Math.max(2, y2-y1);
-      // Прозрачность = пропорциональна размеру стены (динамика: тает → бледнеет)
-      const alpha = Math.min(0.35, 0.08 + (qty/maxQ)*0.27);
+    const {priceBot,priceTop,qty,maxQ}=futAsk;
+    if(priceBot<=mx && priceTop>=mn){
+      const y1=Math.max(toY(priceTop),pad.t), y2=Math.min(toY(priceBot),pad.t+cH);
+      const rh=Math.max(2,y2-y1);
+      const alpha=Math.min(0.4, 0.1+(qty/maxQ)*0.3);
       ctx.save();
-      // Светло-красная заливка
-      ctx.fillStyle = `rgba(255,100,100,${alpha})`;
-      ctx.fillRect(pad.l, y1, cW, rh);
-      // Нижняя граница стены — чёткая линия (граница сопротивления)
-      ctx.strokeStyle = `rgba(255,80,80,${Math.min(0.85, alpha*3)})`;
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([]);
-      ctx.beginPath(); ctx.moveTo(pad.l, y2); ctx.lineTo(W-pad.r, y2); ctx.stroke();
-      // Подпись: объём и диапазон цен
-      const volStr = qty>1000?(qty/1000).toFixed(1)+'K':qty.toFixed(2);
-      const rangeStr = fmtP(priceBot)+'–'+fmtP(priceTop);
-      ctx.font = 'bold 8px JetBrains Mono,monospace';
-      ctx.fillStyle = 'rgba(255,140,140,0.95)';
-      ctx.textAlign = 'left';
-      ctx.fillText(`🔴 ${volStr} BTC  ${rangeStr}`, pad.l+6, y1 > pad.t+12 ? y1-3 : y1+11);
+      ctx.fillStyle=`rgba(255,100,100,${alpha})`;
+      ctx.fillRect(pad.l,y1,cW,rh);
+      ctx.strokeStyle=`rgba(255,70,70,${Math.min(0.9,alpha*2.5)})`;
+      ctx.lineWidth=1.5; ctx.setLineDash([]);
+      ctx.beginPath(); ctx.moveTo(pad.l,y2); ctx.lineTo(W-pad.r,y2); ctx.stroke();
+      const volStr=qty>1000?(qty/1000).toFixed(1)+'K':qty.toFixed(2);
+      ctx.font='bold 8px JetBrains Mono,monospace';
+      ctx.fillStyle='rgba(255,150,150,0.95)'; ctx.textAlign='left';
+      ctx.fillText(`🔴 ${volStr}  ${fmtP(priceBot)}–${fmtP(priceTop)}`, pad.l+6, y1>pad.t+14?y1-3:y1+11);
       ctx.restore();
     }
   }
 
-  // ── Спотовая BID-стена под ценой → СВЕТЛО-ЗЕЛЁНЫЙ прямоугольник ─────────────
+  // Спот BID — под ценой → светло-зелёный
   const spotBid = getBigWall(ST.spot.bids, 'bid');
   if(spotBid){
-    const { priceBot, priceTop, qty, maxQ } = spotBid;
-    if(priceBot <= mx && priceTop >= mn){
-      const y1 = Math.max(toY(priceTop), pad.t);       // верх прямоугольника
-      const y2 = Math.min(toY(priceBot), pad.t+cH);    // низ прямоугольника
-      const rh = Math.max(2, y2-y1);
-      const alpha = Math.min(0.35, 0.08 + (qty/maxQ)*0.27);
+    const {priceBot,priceTop,qty,maxQ}=spotBid;
+    if(priceBot<=mx && priceTop>=mn){
+      const y1=Math.max(toY(priceTop),pad.t), y2=Math.min(toY(priceBot),pad.t+cH);
+      const rh=Math.max(2,y2-y1);
+      const alpha=Math.min(0.4, 0.1+(qty/maxQ)*0.3);
       ctx.save();
-      // Светло-зелёная заливка
-      ctx.fillStyle = `rgba(0,210,120,${alpha})`;
-      ctx.fillRect(pad.l, y1, cW, rh);
-      // Верхняя граница стены — чёткая линия (граница поддержки)
-      ctx.strokeStyle = `rgba(0,200,120,${Math.min(0.85, alpha*3)})`;
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([]);
-      ctx.beginPath(); ctx.moveTo(pad.l, y1); ctx.lineTo(W-pad.r, y1); ctx.stroke();
-      // Подпись
-      const volStr = qty>1000?(qty/1000).toFixed(1)+'K':qty.toFixed(2);
-      const rangeStr = fmtP(priceBot)+'–'+fmtP(priceTop);
-      ctx.font = 'bold 8px JetBrains Mono,monospace';
-      ctx.fillStyle = 'rgba(0,230,140,0.95)';
-      ctx.textAlign = 'left';
-      ctx.fillText(`🟢 ${volStr} BTC  ${rangeStr}`, pad.l+6, y2+11);
+      ctx.fillStyle=`rgba(0,210,120,${alpha})`;
+      ctx.fillRect(pad.l,y1,cW,rh);
+      ctx.strokeStyle=`rgba(0,200,100,${Math.min(0.9,alpha*2.5)})`;
+      ctx.lineWidth=1.5; ctx.setLineDash([]);
+      ctx.beginPath(); ctx.moveTo(pad.l,y1); ctx.lineTo(W-pad.r,y1); ctx.stroke();
+      const volStr=qty>1000?(qty/1000).toFixed(1)+'K':qty.toFixed(2);
+      ctx.font='bold 8px JetBrains Mono,monospace';
+      ctx.fillStyle='rgba(0,230,140,0.95)'; ctx.textAlign='left';
+      ctx.fillText(`🟢 ${volStr}  ${fmtP(priceBot)}–${fmtP(priceTop)}`, pad.l+6, y2+11);
       ctx.restore();
     }
   }
@@ -2212,14 +2162,11 @@ function checkPendingOrders(price){
     const isLong=pos.side==='long';
     const triggered = isLong ? price <= pos.entry : price >= pos.entry;
     if(triggered){
-      pos.pending=false;
-      pos.entry=price;
-      changed=true;
+      pos.pending=false; pos.entry=price; changed=true;
       const col=isLong?'#00c896':'#ff4466';
-      const lbl=isLong?'▲ Лонг сработал @ ':'▼ Шорт сработал @ ';
       const t=document.createElement('div');
       t.style.cssText=`position:fixed;top:50px;right:280px;background:#1c2330;border:1px solid ${col};color:${col};padding:8px 16px;border-radius:6px;font-size:11px;z-index:9999;font-family:JetBrains Mono,monospace;`;
-      t.textContent=lbl+fmtP(price);
+      t.textContent=(isLong?'▲ Лонг сработал @ ':'▼ Шорт сработал @ ')+fmtP(price);
       document.body.appendChild(t); setTimeout(()=>t.remove(),3000);
     }
   });
@@ -2237,20 +2184,17 @@ function drawPositions(){
     ctx.save();
     const line=(y,col,lw,dash=[])=>{ ctx.strokeStyle=col; ctx.lineWidth=lw; ctx.setLineDash(dash); ctx.beginPath(); ctx.moveTo(pad.l,clamp(y)); ctx.lineTo(W-pad.r,clamp(y)); ctx.stroke(); ctx.setLineDash([]); };
     if(pos.pending){
-      // Отложенный ордер: пунктирная линия, нет P&L
       line(yEntry,entryCol,1.5,[4,4]);
       const y=clamp(yEntry);
-      const pendingTxt=(isLong?'▲ ЛИМИТ (ожидание)  ':'▼ ЛИМИТ (ожидание)  ')+fmtP(pos.entry);
+      const pt=(isLong?'▲ ЛИМИТ (ожидание)  ':'▼ ЛИМИТ (ожидание)  ')+fmtP(pos.entry);
       ctx.font='bold 8px JetBrains Mono,monospace';
-      const tw=ctx.measureText(pendingTxt).width, bw=tw+10, bh=14, bx=W-pad.r-bw-3;
+      const tw=ctx.measureText(pt).width,bw=tw+10,bh=14,bx=W-pad.r-bw-3;
       ctx.fillStyle=isLong?'rgba(0,200,150,0.75)':'rgba(255,68,102,0.75)';
-      ctx.fillRect(bx,y-bh/2,bw,bh);
-      ctx.fillStyle='#000'; ctx.textAlign='left'; ctx.fillText(pendingTxt,bx+5,y+4);
-      const delX=pad.l+4, delY=y-7;
+      ctx.fillRect(bx,y-bh/2,bw,bh); ctx.fillStyle='#000'; ctx.textAlign='left'; ctx.fillText(pt,bx+5,y+4);
+      const delX=pad.l+4,delY=y-7;
       ctx.fillStyle='rgba(22,26,34,.95)'; ctx.fillRect(delX,delY,16,13);
       ctx.strokeStyle='#4a5a7a'; ctx.lineWidth=.5; ctx.strokeRect(delX,delY,16,13);
-      ctx.fillStyle='#c8d4e8'; ctx.font='bold 10px monospace'; ctx.textAlign='center';
-      ctx.fillText('×',delX+8,delY+10);
+      ctx.fillStyle='#c8d4e8'; ctx.font='bold 10px monospace'; ctx.textAlign='center'; ctx.fillText('×',delX+8,delY+10);
       pos._delBtn={x:delX,y:delY,w:16,h:13};
     } else {
       line(yTP,'#00c896',1.5,[6,3]); line(yEntry,entryCol,1.5); line(ySL,'#ff4466',1.5,[6,3]);
@@ -2300,19 +2244,14 @@ function setBP(el,tab){
     allPos.map(p=>{
       const g=p.pnl>=0, f=p.en<1?6:2;
       const badge=p.fromChart?` <span style="font-size:8px;color:var(--accent);opacity:.7">📊</span>`:'';
-      const pnlCell = p.pending
-        ? `<td style="color:var(--text3);font-style:italic">⏳ ожидание</td>`
-        : `<td class="${g?'pg':'pr'}">${g?'+':''}${p.pnl.toFixed(2)}<br><span style="font-size:9px">(${p.pp.toFixed(1)}%)</span></td>`;
-      const rowBg = p.pending?`style="background:rgba(245,166,35,.04)"`:(p.fromChart?`style="background:rgba(59,130,246,.05)"`:'');
-      return `<tr ${rowBg}>
-        <td>${p.sym}${badge}${p.pending?'<span style="font-size:8px;color:var(--yellow);margin-left:4px">ЛИМ</span>':''}</td>
-        <td><span class="${p.dir==='long'?'bl':'bs'}">${p.dir==='long'?'Лонг':'Шорт'}</span> ${p.lev}×</td>
+      return `<tr${p.fromChart?` style="background:rgba(59,130,246,.05)"`:''}>
+        <td>${p.sym}${badge}</td><td><span class="${p.dir==='long'?'bl':'bs'}">${p.dir==='long'?'Лонг':'Шорт'}</span> ${p.lev}×</td>
         <td>${typeof p.sz==='number'?p.sz.toFixed(p.sz<1?3:2):p.sz} ${p.un}</td>
         <td>${typeof p.en==='number'?p.en.toFixed(f):p.en}</td><td>${fmtP(curP||71000)}</td>
-        ${pnlCell}
+        <td class="${g?'pg':'pr'}">${g?'+':''}${p.pnl.toFixed(2)}<br><span style="font-size:9px">(${p.pp.toFixed(1)}%)</span></td>
         <td>${typeof p.liq==='number'?fmtP(p.liq):'—'}</td><td>${typeof p.mg==='number'?p.mg.toFixed(2):p.mg}</td>
         <td style="color:var(--accent)">${p.tp}/${p.sl}</td>
-        <td>${p.fromChart?`<button class="ab ab-c" onclick="event.stopPropagation();positionDrawings=[];setBP(document.querySelector('.bp-tab.active'),'pos');drawChart()">Отмена</button>`:`<button class="ab ab-a">Доб.</button><button class="ab ab-c">Закр.</button>`}</td></tr>`;
+        <td>${p.fromChart?`<button class="ab ab-c" onclick="event.stopPropagation();positionDrawings=[];setBP(document.querySelector('.bp-tab.active'),'pos');drawChart()">Закр.</button>`:`<button class="ab ab-a">Доб.</button><button class="ab ab-c">Закр.</button>`}</td></tr>`;
     }).join('')+'</tbody></table>';
   } else if(tab==='ord'){ c.innerHTML='<div style="padding:40px;text-align:center;color:var(--text3)">Нет открытых ордеров</div>';
   } else if(tab==='trd'){ c.innerHTML='<div style="padding:40px;text-align:center;color:var(--text3)">История сделок недоступна без API-ключа</div>';
