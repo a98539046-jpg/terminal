@@ -1892,52 +1892,50 @@ function drawOrderBookWalls(){
       : arr.filter(r=>r[0]<p).sort((a,b)=>b[0]-a[0]);
     if(!filtered.length) return null;
     const allQ = arr.map(r=>r[1]);
-    const avgQ = allQ.reduce((s,v)=>s+v,0)/allQ.length;
     const maxQ = Math.max(...allQ, 0.001);
-    // Порог: топ-20% по объёму среди отфильтрованных уровней
-    const filteredQ = filtered.map(r=>r[1]).sort((a,b)=>b-a);
-    const threshold = filteredQ[Math.floor(filteredQ.length*0.2)] || avgQ*1.5;
-    const walls = filtered.filter(r=>r[1]>=threshold);
-    if(!walls.length) return null;
-    const wall = walls.reduce((a,b)=>b[1]>a[1]?b:a);
+    // Просто берём самый крупный уровень на своей стороне
+    const wall = filtered.reduce((a,b)=>b[1]>a[1]?b:a);
     const wallPrice = wall[0], wallQty = wall[1];
     const wallIdx = filtered.findIndex(r=>r[0]===wallPrice);
     let priceBot, priceTop;
     if(side==='ask'){
       priceBot = wallPrice;
-      priceTop = wallIdx+1<filtered.length ? filtered[wallIdx+1][0] : wallPrice*(1+0.0002);
+      priceTop = wallIdx+1<filtered.length ? filtered[wallIdx+1][0] : wallPrice*(1+0.0003);
     } else {
       priceTop = wallPrice;
-      priceBot = wallIdx+1<filtered.length ? filtered[wallIdx+1][0] : wallPrice*(1-0.0002);
+      priceBot = wallIdx+1<filtered.length ? filtered[wallIdx+1][0] : wallPrice*(1-0.0003);
     }
-    const minRange = wallPrice * 0.0006;
+    const minRange = wallPrice * 0.0008;
     if(side==='ask' && (priceTop-priceBot)<minRange) priceTop = priceBot + minRange;
     if(side==='bid' && (priceTop-priceBot)<minRange) priceBot = priceTop - minRange;
     return { priceBot, priceTop, qty:wallQty, maxQ };
   }
 
   const halfW = cW / 2;
-  const xLeft  = pad.l;            // СПОТ — левая половина
-  const xRight = pad.l + halfW;    // ФЬЮЧ — правая половина
-  const xDiv   = xRight;           // граница между половинами
+  const xLeft  = pad.l;
+  const xRight = pad.l + halfW;
 
-  // Всегда рисуем разделитель посередине графика
+  // Получаем стены заранее
+  const sAsk = getBigWall(ST.spot.asks,'ask');
+  const fAsk = getBigWall(ST.fut.asks, 'ask');
+  const sBid = getBigWall(ST.spot.bids,'bid');
+  const fBid = getBigWall(ST.fut.bids, 'bid');
+
+  if(!sAsk && !fAsk && !sBid && !fBid) return;
+
+  // Разделитель посередине
   ctx.save();
-  ctx.strokeStyle = 'rgba(200,200,200,0.15)';
+  ctx.strokeStyle = 'rgba(255,255,255,0.2)';
   ctx.lineWidth = 1;
-  ctx.setLineDash([4,5]);
-  ctx.beginPath(); ctx.moveTo(xDiv, pad.t); ctx.lineTo(xDiv, pad.t+cH); ctx.stroke();
+  ctx.setLineDash([2,4]);
+  ctx.beginPath(); ctx.moveTo(xRight,pad.t+16); ctx.lineTo(xRight,pad.t+cH); ctx.stroke();
   ctx.setLineDash([]);
   ctx.font = '7px JetBrains Mono,monospace';
   ctx.textAlign = 'center';
-  ctx.fillStyle = 'rgba(200,200,200,0.2)';
-  ctx.fillText('СПОТ', xLeft+halfW/2, pad.t+9);
-  ctx.fillText('ФЬЮЧ', xRight+halfW/2, pad.t+9);
+  ctx.fillStyle = 'rgba(255,255,255,0.2)';
+  ctx.fillText('СПОТ', xLeft+halfW/2, pad.t+12);
+  ctx.fillText('ФЬЮЧ', xRight+halfW/2, pad.t+12);
   ctx.restore();
-
-  // isAsk: true=красный(ASK), false=зелёный(BID)
-  // isSpot: true=спот(светлее), false=фьюч(насыщеннее)
-  function drawHalf(wall, xStart, rectW, isAsk, isSpot){
     if(!wall) return;
     const {priceBot,priceTop,qty,maxQ}=wall;
     if(priceBot>mx||priceTop<mn) return;
@@ -1986,13 +1984,13 @@ function drawOrderBookWalls(){
     ctx.restore();
   }
 
-  // ASK стены (красные, над ценой)
-  drawHalf(getBigWall(ST.spot.asks,'ask'), xLeft,  halfW, true,  true);   // спот слева
-  drawHalf(getBigWall(ST.fut.asks, 'ask'), xRight, halfW, true,  false);  // фьюч справа
+  // ASK (красные): спот слева, фьюч справа
+  drawHalf(sAsk, xLeft,  halfW, true,  true);
+  drawHalf(fAsk, xRight, halfW, true,  false);
 
-  // BID стены (зелёные, под ценой)
-  drawHalf(getBigWall(ST.spot.bids,'bid'), xLeft,  halfW, false, true);   // спот слева
-  drawHalf(getBigWall(ST.fut.bids, 'bid'), xRight, halfW, false, false);  // фьюч справа
+  // BID (зелёные): спот слева, фьюч справа
+  drawHalf(sBid, xLeft,  halfW, false, true);
+  drawHalf(fBid, xRight, halfW, false, false);
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
