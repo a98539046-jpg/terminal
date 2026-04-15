@@ -1975,80 +1975,106 @@ function drawOrderBookWalls(){
   const p = curP;
   if(!p) return;
 
-  // Определяем порог "большой стены" — топ-1 по объёму с каждой стороны
+  // Находим крупную стену и её реальный ценовой диапазон из стакана
+  // arr — массив [price, qty], side — 'ask' или 'bid'
+  // Возвращает { priceBot, priceTop, qty, maxQ } или null
   function getBigWall(arr, side){
     if(!arr || arr.length < 2) return null;
-    const filtered = side==='ask' ? arr.filter(r=>r[0]>p) : arr.filter(r=>r[0]<p);
-    if(!filtered.length) return null;
+    // Фильтруем только нужную сторону от текущей цены
+    const filtered = side==='ask'
+      ? arr.filter(r=>r[0]>p).sort((a,b)=>a[0]-b[0])  // asks: от нижнего к верхнему
+      : arr.filter(r=>r[0]<p).sort((a,b)=>b[0]-a[0]);  // bids: от верхнего к нижнему
+    if(filtered.length < 1) return null;
+
     const allQ = arr.map(r=>r[1]);
     const avgQ = allQ.reduce((s,v)=>s+v,0)/allQ.length;
+    const maxQ = Math.max(...allQ, 0.001);
     const threshold = avgQ * 4; // стена = в 4 раза больше среднего
+
+    // Ищем самую крупную стену
     const walls = filtered.filter(r=>r[1]>=threshold);
     if(!walls.length) return null;
-    // Берём самую крупную стену
-    return walls.reduce((a,b)=>b[1]>a[1]?b:a);
+    const wall = walls.reduce((a,b)=>b[1]>a[1]?b:a);
+    const wallPrice = wall[0];
+    const wallQty = wall[1];
+
+    // Реальный диапазон: от цены стены до следующего уровня в стакане
+    const wallIdx = filtered.findIndex(r=>r[0]===wallPrice);
+    let priceBot, priceTop;
+    if(side==='ask'){
+      // ASK: стена снизу-вверх
+      priceBot = wallPrice;
+      // Верхняя граница = следующий уровень в стакане или +тик
+      priceTop = wallIdx+1 < filtered.length
+        ? filtered[wallIdx+1][0]
+        : wallPrice + wallPrice*0.0002;
+    } else {
+      // BID: стена сверху-вниз
+      priceTop = wallPrice;
+      // Нижняя граница = следующий уровень вниз или -тик
+      priceBot = wallIdx+1 < filtered.length
+        ? filtered[wallIdx+1][0]
+        : wallPrice - wallPrice*0.0002;
+    }
+    return { priceBot, priceTop, qty: wallQty, maxQ };
   }
 
-  // Фьючерсная стена ASK (сопротивление — над ценой) → светло-красный
+  // ── Фьючерсная ASK-стена над ценой → СВЕТЛО-КРАСНЫЙ прямоугольник ──────────
   const futAsk = getBigWall(ST.fut.asks, 'ask');
   if(futAsk){
-    const wp = futAsk[0];
-    const wq = futAsk[1];
-    // Высота прямоугольника — пропорциональна объёму (мин 0.05% от цены)
-    const allQ = (ST.fut.asks||[]).map(r=>r[1]);
-    const maxQ = Math.max(...allQ, 0.001);
-    const heightPct = 0.0005 + (wq/maxQ)*0.003; // от 0.05% до 0.35%
-    const wallTop = wp + p*heightPct;
-    const wallBot = wp;
-    if(wp >= mn && wp <= mx){
-      const y1 = Math.max(toY(wallTop), pad.t);
-      const y2 = Math.min(toY(wallBot), pad.t+cH);
-      const rh = Math.max(3, y2-y1);
-      // Прозрачность зависит от размера стены
-      const alpha = Math.min(0.45, 0.15 + (wq/maxQ)*0.3);
+    const { priceBot, priceTop, qty, maxQ } = futAsk;
+    // Рисуем только если стена видна на графике
+    if(priceBot <= mx && priceTop >= mn){
+      const y1 = Math.max(toY(priceTop), pad.t);       // верх прямоугольника
+      const y2 = Math.min(toY(priceBot), pad.t+cH);    // низ прямоугольника
+      const rh = Math.max(2, y2-y1);
+      // Прозрачность = пропорциональна размеру стены (динамика: тает → бледнеет)
+      const alpha = Math.min(0.35, 0.08 + (qty/maxQ)*0.27);
       ctx.save();
-      ctx.fillStyle = `rgba(255,80,80,${alpha})`;
+      // Светло-красная заливка
+      ctx.fillStyle = `rgba(255,100,100,${alpha})`;
       ctx.fillRect(pad.l, y1, cW, rh);
-      ctx.strokeStyle = `rgba(255,80,80,${Math.min(0.9, alpha*2)})`;
-      ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(pad.l,y1); ctx.lineTo(W-pad.r,y1); ctx.stroke();
-      // Подпись
-      const volStr = wq>1000?(wq/1000).toFixed(1)+'K':wq.toFixed(1);
+      // Нижняя граница стены — чёткая линия (граница сопротивления)
+      ctx.strokeStyle = `rgba(255,80,80,${Math.min(0.85, alpha*3)})`;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([]);
+      ctx.beginPath(); ctx.moveTo(pad.l, y2); ctx.lineTo(W-pad.r, y2); ctx.stroke();
+      // Подпись: объём и диапазон цен
+      const volStr = qty>1000?(qty/1000).toFixed(1)+'K':qty.toFixed(2);
+      const rangeStr = fmtP(priceBot)+'–'+fmtP(priceTop);
       ctx.font = 'bold 8px JetBrains Mono,monospace';
-      ctx.fillStyle = `rgba(255,120,120,0.95)`;
+      ctx.fillStyle = 'rgba(255,140,140,0.95)';
       ctx.textAlign = 'left';
-      ctx.fillText(`🔴 СТЕНА ${volStr} (фьюч)`, pad.l+6, y1-3);
+      ctx.fillText(`🔴 ${volStr} BTC  ${rangeStr}`, pad.l+6, y1 > pad.t+12 ? y1-3 : y1+11);
       ctx.restore();
     }
   }
 
-  // Спотовая стена BID (поддержка — под ценой) → светло-зелёный
+  // ── Спотовая BID-стена под ценой → СВЕТЛО-ЗЕЛЁНЫЙ прямоугольник ─────────────
   const spotBid = getBigWall(ST.spot.bids, 'bid');
   if(spotBid){
-    const wp = spotBid[0];
-    const wq = spotBid[1];
-    const allQ = (ST.spot.bids||[]).map(r=>r[1]);
-    const maxQ = Math.max(...allQ, 0.001);
-    const heightPct = 0.0005 + (wq/maxQ)*0.003;
-    const wallTop = wp;
-    const wallBot = wp - p*heightPct;
-    if(wp >= mn && wp <= mx){
-      const y1 = Math.max(toY(wallTop), pad.t);
-      const y2 = Math.min(toY(wallBot), pad.t+cH);
-      const rh = Math.max(3, y2-y1);
-      const alpha = Math.min(0.45, 0.15 + (wq/maxQ)*0.3);
+    const { priceBot, priceTop, qty, maxQ } = spotBid;
+    if(priceBot <= mx && priceTop >= mn){
+      const y1 = Math.max(toY(priceTop), pad.t);       // верх прямоугольника
+      const y2 = Math.min(toY(priceBot), pad.t+cH);    // низ прямоугольника
+      const rh = Math.max(2, y2-y1);
+      const alpha = Math.min(0.35, 0.08 + (qty/maxQ)*0.27);
       ctx.save();
-      ctx.fillStyle = `rgba(0,200,120,${alpha})`;
+      // Светло-зелёная заливка
+      ctx.fillStyle = `rgba(0,210,120,${alpha})`;
       ctx.fillRect(pad.l, y1, cW, rh);
-      ctx.strokeStyle = `rgba(0,200,120,${Math.min(0.9, alpha*2)})`;
-      ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(pad.l,y2); ctx.lineTo(W-pad.r,y2); ctx.stroke();
+      // Верхняя граница стены — чёткая линия (граница поддержки)
+      ctx.strokeStyle = `rgba(0,200,120,${Math.min(0.85, alpha*3)})`;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([]);
+      ctx.beginPath(); ctx.moveTo(pad.l, y1); ctx.lineTo(W-pad.r, y1); ctx.stroke();
       // Подпись
-      const volStr = wq>1000?(wq/1000).toFixed(1)+'K':wq.toFixed(1);
+      const volStr = qty>1000?(qty/1000).toFixed(1)+'K':qty.toFixed(2);
+      const rangeStr = fmtP(priceBot)+'–'+fmtP(priceTop);
       ctx.font = 'bold 8px JetBrains Mono,monospace';
-      ctx.fillStyle = `rgba(0,220,140,0.95)`;
+      ctx.fillStyle = 'rgba(0,230,140,0.95)';
       ctx.textAlign = 'left';
-      ctx.fillText(`🟢 СТЕНА ${volStr} (спот)`, pad.l+6, y2+10);
+      ctx.fillText(`🟢 ${volStr} BTC  ${rangeStr}`, pad.l+6, y2+11);
       ctx.restore();
     }
   }
