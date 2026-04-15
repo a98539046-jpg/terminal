@@ -382,7 +382,7 @@ canvas{position:absolute;top:0;left:0;}
     <div class="op-body">
       <div style="display:flex;justify-content:space-between;font-size:9px;"><span style="color:var(--text3)">Доступно</span><span style="color:var(--text2)" title="Демо-баланс.">12,450.00 USDT <span style="color:var(--text3);font-size:8px">(демо)</span></span></div>
       <div><div class="fl">Цена (USDT)</div>
-        <div class="fw"><input type="text" id="opP" value="—">
+        <div class="fw"><input type="text" id="opP" value="—" oninput="this.dataset.e='1'" onfocus="this.dataset.e='1'" onblur="if(!this.value||this.value==='—')this.dataset.e=''">
           <div class="fa"><button onclick="aP(1)">▲</button><button onclick="aP(-1)">▼</button></div>
           <span class="fu">USDT</span></div></div>
       <div><div class="fl">Количество (BTC)</div>
@@ -1515,6 +1515,7 @@ function setSym(sym,label){
   ST.fut.candles={};  ST.fut.price=0;  ST.fut.asks=[];  ST.fut.bids=[];
   curP=0; visOffset=0; visCount=120; positionDrawings=[]; liqMapZones=[];
   computedLevels=[]; liqLevels=[]; obHistory=[]; bigWalls=[]; _obHash='';
+  const _opP=document.getElementById('opP'); if(_opP) { _opP.dataset.e=''; _opP.value='—'; }
   ['tbPrice','tbChange','tbHigh','tbLow','tbVol'].forEach(id=>{ const el=document.getElementById(id); if(el) el.textContent='—'; });
   ['sAsks','sBids','fAsks','fBids'].forEach(id=>{ const el=document.getElementById(id); if(el) el.innerHTML=''; });
   document.getElementById('sMidP').textContent='—'; document.getElementById('fMidP').textContent='—';
@@ -1760,7 +1761,11 @@ function updPLabel(p,up){
   const lb=document.getElementById('pLabel');
   lb.style.background=up?'#00c896':'#ff4466';lb.style.color=up?'#000':'#fff';lb.textContent=fmtP(p);
 }
-function updOPPrice(p){const el=document.getElementById('opP');if(!el.dataset.e)el.value=fmtP(p);}
+function updOPPrice(p){
+  const el=document.getElementById('opP');
+  if(el.disabled) return; // режим Рынок — поле заблокировано, не трогаем
+  if(!el.dataset.e) el.value=fmtP(p); // лимит — обновляем только если пользователь не редактировал
+}
 function calcTQuiet(){
   const q=+document.getElementById('opQ').value||0, p=curP||71000;
   document.getElementById('opT').value=fmtN(q*p);
