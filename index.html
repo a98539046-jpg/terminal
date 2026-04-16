@@ -1327,8 +1327,8 @@ async function fetchOB(){
     }catch(_){}
     return null;
   };
-  const spotUrl = `https://open-api.bingx.com/openApi/spot/v2/market/depth?symbol=${sym}&depth=20`;
-  const futUrl  = `https://open-api.bingx.com/openApi/swap/v2/quote/depth?symbol=${sym}&limit=20`;
+  const spotUrl = `https://open-api.bingx.com/openApi/spot/v2/market/depth?symbol=${sym}&depth=100`;
+  const futUrl  = `https://open-api.bingx.com/openApi/swap/v2/quote/depth?symbol=${sym}&limit=100`;
   const [spotData, futData] = await Promise.all([fastFetch(spotUrl), fastFetch(futUrl)]);
   if(sym !== curSym){ _obFetching=false; return; }
   if(spotData){ ST.spot.asks=spotData.asks; ST.spot.bids=spotData.bids; }
@@ -1886,30 +1886,78 @@ function drawOrderBookWalls(){
   const {pad,cW,toY,cH,mn,mx} = CM;
   const p = curP; if(!p) return;
 
+  // Находим крупнейшую стену в стакане
+  function getBigWall(arr, side){
+    if(!arr||!arr.length) return null;
+    const filtered = side==='ask'
+      ? arr.filter(r=>r[0]>p).sort((a,b)=>a[0]-b[0])
+      : arr.filter(r=>r[0]<p).sort((a,b)=>b[0]-a[0]);
+    if(!filtered.length) return null;
+    const maxQ = Math.max(...arr.map(r=>r[1]), 0.001);
+    // Крупнейший уровень
+    const wall = filtered.reduce((a,b)=>b[1]>a[1]?b:a);
+    const wallPrice = wall[0], wallQty = wall[1];
+    const wallIdx = filtered.findIndex(r=>r[0]===wallPrice);
+    let priceTop, priceBot;
+    if(side==='ask'){
+      priceBot = wallPrice;
+      priceTop = wallIdx+1<filtered.length ? filtered[wallIdx+1][0] : wallPrice*(1+0.0005);
+    } else {
+      priceTop = wallPrice;
+      priceBot = wallIdx+1<filtered.length ? filtered[wallIdx+1][0] : wallPrice*(1-0.0005);
+    }
+    const minH = wallPrice * 0.001;
+    if(side==='ask' && priceTop-priceBot < minH) priceTop = priceBot + minH;
+    if(side==='bid' && priceTop-priceBot < minH) priceBot = priceTop - minH;
+    return { priceBot, priceTop, qty:wallQty, maxQ };
+  }
+
+  // Стопы шортистов — выше H7d (ASK стена за уровнем сопротивления)
+  // Стопы лонгистов — ниже L7d (BID стена за уровнем поддержки)
+  function getBigWallAbove(arr, minPrice){
+    if(!arr||!arr.length) return null;
+    const filtered = arr.filter(r=>r[0]>minPrice).sort((a,b)=>a[0]-b[0]);
+    if(!filtered.length) return getBigWall(arr, 'ask'); // fallback
+    const maxQ = Math.max(...arr.map(r=>r[1]), 0.001);
+    const wall = filtered.reduce((a,b)=>b[1]>a[1]?b:a);
+    const wallIdx = filtered.findIndex(r=>r[0]===wall[0]);
+    const priceBot = wall[0];
+    const priceTop = wallIdx+1<filtered.length ? filtered[wallIdx+1][0] : wall[0]*(1+0.0005);
+    const minH = wall[0]*0.001;
+    return { priceBot, priceTop: Math.max(priceTop, priceBot+minH), qty:wall[1], maxQ };
+  }
+
+  function getBigWallBelow(arr, maxPrice){
+    if(!arr||!arr.length) return null;
+    const filtered = arr.filter(r=>r[0]<maxPrice).sort((a,b)=>b[0]-a[0]);
+    if(!filtered.length) return getBigWall(arr, 'bid'); // fallback
+    const maxQ = Math.max(...arr.map(r=>r[1]), 0.001);
+    const wall = filtered.reduce((a,b)=>b[1]>a[1]?b:a);
+    const wallIdx = filtered.findIndex(r=>r[0]===wall[0]);
+    const priceTop = wall[0];
+    const priceBot = wallIdx+1<filtered.length ? filtered[wallIdx+1][0] : wall[0]*(1-0.0005);
+    const minH = wall[0]*0.001;
+    return { priceBot: Math.min(priceBot, priceTop-minH), priceTop, qty:wall[1], maxQ };
+  }
+
   const cs = ST[mkt].candles[tf];
   if(!cs||cs.length<2) return;
   const week = cs.slice(-Math.min(Math.round(604800000/TF_MS[tf]),cs.length));
   const h7d = Math.max(...week.map(c=>c.h));
   const l7d = Math.min(...week.map(c=>c.l));
 
-  function getBiggestWall(arr, side){
-    if(!arr||!arr.length) return null;
-    const filtered = side==='ask' ? arr.filter(r=>r[0]>p) : arr.filter(r=>r[0]<p);
-    if(!filtered.length) return null;
-    const maxQ = Math.max(...arr.map(r=>r[1]), 0.001);
-    const wall = filtered.reduce((a,b)=>b[1]>a[1]?b:a);
-    return { qty: wall[1], maxQ };
-  }
+  // ASK: ищем выше H7d, BID: ищем ниже L7d
+  const sAsk = getBigWallAbove(ST.spot.asks, h7d);
+  const fAsk = getBigWallAbove(ST.fut.asks,  h7d);
+  const sBid = getBigWallBelow(ST.spot.bids, l7d);
+  const fBid = getBigWallBelow(ST.fut.bids,  l7d);
 
-  const sAskW = getBiggestWall(ST.spot.asks, 'ask');
-  const fAskW = getBiggestWall(ST.fut.asks,  'ask');
-  const sBidW = getBiggestWall(ST.spot.bids, 'bid');
-  const fBidW = getBiggestWall(ST.fut.bids,  'bid');
+  if(!sAsk && !fAsk && !sBid && !fBid) return;
 
   const xMid = pad.l + cW/2;
   const xEnd = pad.l + cW;
-  const minH = p * 0.001;
 
+  // Разделитель СПОТ | ФЬЮЧ
   ctx.save();
   ctx.strokeStyle='rgba(255,255,255,0.15)';
   ctx.lineWidth=1; ctx.setLineDash([2,5]);
@@ -1921,46 +1969,53 @@ function drawOrderBookWalls(){
   ctx.fillText('ФЬЮЧ', xMid+cW/4, pad.t+11);
   ctx.restore();
 
-  function drawHalf(wallData, level, xFrom, xTo, isAsk, isSpot){
+  function drawHalf(wall, xFrom, xTo, isAsk, isSpot){
+    if(!wall) return;
+    const {priceBot, priceTop, qty, maxQ} = wall;
+    const midPrice = (priceBot+priceTop)/2;
     const rectW = xTo - xFrom;
-    const priceTop = isAsk ? level + minH : level;
-    const priceBot = isAsk ? level : level - minH;
+    const volStr = qty>=1e6?(qty/1e6).toFixed(1)+'M':qty>=1e3?(qty/1e3).toFixed(1)+'K':qty.toFixed(1);
+
+    // Вне экрана — стрелка
     if(priceTop < mn || priceBot > mx){
-      if(!wallData) return;
-      const above = level > mx;
+      const above = midPrice > mx;
       const ey = above ? pad.t+20 : pad.t+cH-6;
-      const volStr = wallData.qty>=1e6?(wallData.qty/1e6).toFixed(1)+'M':wallData.qty>=1e3?(wallData.qty/1e3).toFixed(1)+'K':wallData.qty.toFixed(1);
       ctx.save();
       ctx.font='bold 8px JetBrains Mono,monospace';
       const txt=(above?'▲ ':'▼ ')+volStr;
       const tw=ctx.measureText(txt).width+8;
-      ctx.fillStyle=isAsk?(isSpot?'rgba(255,120,120,0.85)':'rgba(200,30,30,0.85)'):(isSpot?'rgba(60,210,130,0.85)':'rgba(0,150,60,0.85)');
+      ctx.fillStyle=isAsk
+        ?(isSpot?'rgba(255,120,120,0.85)':'rgba(200,30,30,0.85)')
+        :(isSpot?'rgba(60,210,130,0.85)':'rgba(0,150,60,0.85)');
       ctx.fillRect(xFrom+rectW/2-tw/2, ey-10, tw, 14);
       ctx.fillStyle='#fff'; ctx.textAlign='left';
       ctx.fillText(txt, xFrom+rectW/2-tw/2+4, ey+1);
       ctx.restore(); return;
     }
+
     const y1 = Math.max(toY(priceTop), pad.t);
     const y2 = Math.min(toY(priceBot), pad.t+cH);
     const rh = Math.max(6, y2-y1);
+
     ctx.save();
     if(isAsk){
       ctx.fillStyle = isSpot?'rgba(255,180,180,0.25)':'rgba(200,20,20,0.45)';
       ctx.fillRect(xFrom, y1, rectW, rh);
       ctx.strokeStyle = isSpot?'rgba(255,150,150,0.7)':'rgba(255,30,30,0.9)';
-      ctx.lineWidth = isSpot?1:2.5; ctx.setLineDash([]);
+      ctx.lineWidth=isSpot?1:2.5; ctx.setLineDash([]);
       ctx.beginPath(); ctx.moveTo(xFrom,y2); ctx.lineTo(xTo,y2); ctx.stroke();
     } else {
       ctx.fillStyle = isSpot?'rgba(100,230,150,0.25)':'rgba(0,150,60,0.45)';
       ctx.fillRect(xFrom, y1, rectW, rh);
       ctx.strokeStyle = isSpot?'rgba(80,230,140,0.7)':'rgba(0,210,80,0.9)';
-      ctx.lineWidth = isSpot?1:2.5; ctx.setLineDash([]);
+      ctx.lineWidth=isSpot?1:2.5; ctx.setLineDash([]);
       ctx.beginPath(); ctx.moveTo(xFrom,y1); ctx.lineTo(xTo,y1); ctx.stroke();
     }
+    // Белый разделитель
     ctx.strokeStyle='rgba(255,255,255,0.45)'; ctx.lineWidth=1.5;
     ctx.beginPath(); ctx.moveTo(xMid,y1); ctx.lineTo(xMid,y1+rh); ctx.stroke();
-    if(wallData && rh>14){
-      const volStr = wallData.qty>=1e6?(wallData.qty/1e6).toFixed(1)+'M':wallData.qty>=1e3?(wallData.qty/1e3).toFixed(1)+'K':wallData.qty.toFixed(1);
+    // Объём
+    if(rh>14){
       ctx.font='bold 8px JetBrains Mono,monospace';
       ctx.fillStyle=isAsk?'rgba(255,230,230,0.9)':'rgba(210,255,225,0.9)';
       ctx.textAlign='center';
@@ -1969,10 +2024,12 @@ function drawOrderBookWalls(){
     ctx.restore();
   }
 
-  drawHalf(sAskW, h7d, pad.l, xMid, true,  true);
-  drawHalf(fAskW, h7d, xMid,  xEnd, true,  false);
-  drawHalf(sBidW, l7d, pad.l, xMid, false, true);
-  drawHalf(fBidW, l7d, xMid,  xEnd, false, false);
+  // ASK: СПОТ слева, ФЬЮЧ справа
+  drawHalf(sAsk, pad.l, xMid, true,  true);
+  drawHalf(fAsk, xMid,  xEnd, true,  false);
+  // BID: СПОТ слева, ФЬЮЧ справа
+  drawHalf(sBid, pad.l, xMid, false, true);
+  drawHalf(fBid, xMid,  xEnd, false, false);
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
