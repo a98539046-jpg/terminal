@@ -1882,124 +1882,150 @@ function drawOBHeatmap(){
 // ─── СТЕНЫ ИЗ СТАКАНА НА ГРАФИКЕ ────────────────────────────────────────────
 function drawOrderBookWalls(){
   if(!CM||!CM.rng||!showLiq) return;
-  const {pad,W,cW,toY,cH,mn,mx} = CM;
+  const {pad,cW,toY,cH,mn,mx} = CM;
   const p = curP; if(!p) return;
 
+  const spotAsks = ST.spot.asks.length ? ST.spot.asks : [];
+  const spotBids = ST.spot.bids.length ? ST.spot.bids : [];
+  const futAsks  = ST.fut.asks.length  ? ST.fut.asks  : [];
+  const futBids  = ST.fut.bids.length  ? ST.fut.bids  : [];
+
   function getBigWall(arr, side){
-    if(!arr||arr.length<2) return null;
+    if(!arr||!arr.length) return null;
     const filtered = side==='ask'
       ? arr.filter(r=>r[0]>p).sort((a,b)=>a[0]-b[0])
       : arr.filter(r=>r[0]<p).sort((a,b)=>b[0]-a[0]);
     if(!filtered.length) return null;
-    const allQ = arr.map(r=>r[1]);
-    const maxQ = Math.max(...allQ, 0.001);
-    // Просто берём самый крупный уровень на своей стороне
+    const maxQ = Math.max(...arr.map(r=>r[1]), 0.001);
     const wall = filtered.reduce((a,b)=>b[1]>a[1]?b:a);
     const wallPrice = wall[0], wallQty = wall[1];
     const wallIdx = filtered.findIndex(r=>r[0]===wallPrice);
     let priceBot, priceTop;
     if(side==='ask'){
       priceBot = wallPrice;
-      priceTop = wallIdx+1<filtered.length ? filtered[wallIdx+1][0] : wallPrice*(1+0.0003);
+      priceTop = wallIdx+1<filtered.length ? filtered[wallIdx+1][0] : wallPrice*(1+0.0005);
     } else {
       priceTop = wallPrice;
-      priceBot = wallIdx+1<filtered.length ? filtered[wallIdx+1][0] : wallPrice*(1-0.0003);
+      priceBot = wallIdx+1<filtered.length ? filtered[wallIdx+1][0] : wallPrice*(1-0.0005);
     }
-    const minRange = wallPrice * 0.0008;
+    const minRange = wallPrice * 0.001;
     if(side==='ask' && (priceTop-priceBot)<minRange) priceTop = priceBot + minRange;
     if(side==='bid' && (priceTop-priceBot)<minRange) priceBot = priceTop - minRange;
     return { priceBot, priceTop, qty:wallQty, maxQ };
   }
 
-  const halfW = cW / 2;
-  const xLeft  = pad.l;
-  const xRight = pad.l + halfW;
-
-  // Получаем стены заранее
-  const sAsk = getBigWall(ST.spot.asks,'ask');
-  const fAsk = getBigWall(ST.fut.asks, 'ask');
-  const sBid = getBigWall(ST.spot.bids,'bid');
-  const fBid = getBigWall(ST.fut.bids, 'bid');
+  const sAsk = getBigWall(spotAsks,'ask');
+  const fAsk = getBigWall(futAsks, 'ask');
+  const sBid = getBigWall(spotBids,'bid');
+  const fBid = getBigWall(futBids, 'bid');
 
   if(!sAsk && !fAsk && !sBid && !fBid) return;
 
-  // Разделитель посередине
+  // Левая половина = СПОТ, правая = ФЬЮЧ
+  const xMid  = pad.l + cW/2;
+  const xEnd  = pad.l + cW;
+  const halfW = cW/2;
+
+  // Всегда рисуем вертикальный разделитель посередине
   ctx.save();
-  ctx.strokeStyle = 'rgba(255,255,255,0.2)';
-  ctx.lineWidth = 1;
-  ctx.setLineDash([2,4]);
-  ctx.beginPath(); ctx.moveTo(xRight,pad.t+16); ctx.lineTo(xRight,pad.t+cH); ctx.stroke();
+  ctx.strokeStyle='rgba(255,255,255,0.12)';
+  ctx.lineWidth=1; ctx.setLineDash([3,5]);
+  ctx.beginPath(); ctx.moveTo(xMid,pad.t); ctx.lineTo(xMid,pad.t+cH); ctx.stroke();
   ctx.setLineDash([]);
-  ctx.font = '7px JetBrains Mono,monospace';
-  ctx.textAlign = 'center';
-  ctx.fillStyle = 'rgba(255,255,255,0.2)';
-  ctx.fillText('СПОТ', xLeft+halfW/2, pad.t+12);
-  ctx.fillText('ФЬЮЧ', xRight+halfW/2, pad.t+12);
+  ctx.font='7px JetBrains Mono,monospace'; ctx.textAlign='center';
+  ctx.fillStyle='rgba(255,255,255,0.15)';
+  ctx.fillText('СПОТ', pad.l+halfW/2, pad.t+10);
+  ctx.fillText('ФЬЮЧ', xMid+halfW/2, pad.t+10);
   ctx.restore();
 
-  function drawHalf(wall, xStart, rectW, isAsk, isSpot){
+  // Рисует одну половину прямоугольника стены
+  // xFrom/xTo — горизонтальные границы половины
+  // isAsk: true=красный(ASK/сопротивление), false=зелёный(BID/поддержка)
+  // isSpot: true=левая(спот), false=правая(фьюч)
+  function drawRect(wall, xFrom, xTo, isAsk, isSpot){
     if(!wall) return;
     const {priceBot,priceTop,qty,maxQ} = wall;
     const midPrice = (priceBot+priceTop)/2;
-    const volStr = qty>=1e6?(qty/1e6).toFixed(1)+'M':qty>=1e3?(qty/1e3).toFixed(1)+'K':qty.toFixed(1);
+    const rectW = xTo - xFrom;
+    const volStr = qty>=1e6?(qty/1e6).toFixed(1)+'M'
+                 : qty>=1e3?(qty/1e3).toFixed(1)+'K'
+                 : qty.toFixed(1);
 
-    // Стена вне экрана — рисуем стрелку-индикатор у края графика
-    if(priceTop<mn || priceBot>mx){
-      const isAbove = midPrice > mx;
-      const ey = isAbove ? pad.t+22 : pad.t+cH-8;
-      const arrow = isAbove ? '▲' : '▼';
+    // Стена вне видимой области — рисуем стрелку у края
+    if(priceTop < mn || priceBot > mx){
+      const above = midPrice > mx;
+      const ey = above ? pad.t+20 : pad.t+cH-6;
       ctx.save();
-      ctx.font = 'bold 8px JetBrains Mono,monospace';
-      const txt = `${arrow} ${volStr}`;
-      const tw = ctx.measureText(txt).width+8;
-      const bx = xStart + rectW/2 - tw/2;
+      ctx.font='bold 8px JetBrains Mono,monospace';
+      const txt=(above?'▲ ':'▼ ')+volStr;
+      const tw=ctx.measureText(txt).width+8;
       ctx.fillStyle = isAsk
-        ? (isSpot?'rgba(255,100,100,0.85)':'rgba(200,30,30,0.85)')
-        : (isSpot?'rgba(60,200,120,0.85)':'rgba(0,150,60,0.85)');
-      ctx.fillRect(bx, ey-10, tw, 14);
+        ? (isSpot?'rgba(255,120,120,0.9)':'rgba(200,30,30,0.9)')
+        : (isSpot?'rgba(60,210,130,0.9)':'rgba(0,160,70,0.9)');
+      ctx.fillRect(xFrom+rectW/2-tw/2, ey-10, tw, 14);
       ctx.fillStyle='#fff'; ctx.textAlign='left';
-      ctx.fillText(txt, bx+4, ey+1);
+      ctx.fillText(txt, xFrom+rectW/2-tw/2+4, ey+1);
       ctx.restore();
       return;
     }
 
     const y1 = Math.max(toY(priceTop), pad.t);
     const y2 = Math.min(toY(priceBot), pad.t+cH);
-    const rh = Math.max(5, y2-y1);
-    const alpha = Math.min(0.55, 0.15+(qty/maxQ)*0.4);
-    const aSpot = isSpot ? alpha*0.75 : alpha;
+    const rh = Math.max(6, y2-y1);
+    // Спот светлее (0.7x), фьюч насыщеннее (1x)
+    const base = Math.min(0.55, 0.18+(qty/maxQ)*0.37);
+    const alpha = isSpot ? base*0.7 : base;
+
     ctx.save();
     if(isAsk){
-      ctx.fillStyle = isSpot ? `rgba(255,160,160,${aSpot})` : `rgba(220,40,40,${aSpot})`;
-      ctx.fillRect(xStart, y1, rectW, rh);
-      ctx.strokeStyle = isSpot ? `rgba(255,130,130,${Math.min(0.9,aSpot*2)})` : `rgba(255,50,50,${Math.min(0.9,aSpot*2)})`;
+      // Красный — сопротивление
+      ctx.fillStyle = isSpot
+        ? `rgba(255,150,150,${alpha})`
+        : `rgba(210,30,30,${alpha})`;
+      ctx.fillRect(xFrom, y1, rectW, rh);
+      // Нижняя граница — уровень сопротивления
+      ctx.strokeStyle = isSpot
+        ? `rgba(255,100,100,${Math.min(0.95,alpha*2.5)})`
+        : `rgba(255,40,40,${Math.min(0.95,alpha*2.5)})`;
       ctx.lineWidth = isSpot ? 1 : 2;
-      ctx.beginPath(); ctx.moveTo(xStart,y2); ctx.lineTo(xStart+rectW,y2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(xFrom,y2); ctx.lineTo(xTo,y2); ctx.stroke();
     } else {
-      ctx.fillStyle = isSpot ? `rgba(100,220,150,${aSpot})` : `rgba(0,170,80,${aSpot})`;
-      ctx.fillRect(xStart, y1, rectW, rh);
-      ctx.strokeStyle = isSpot ? `rgba(80,220,140,${Math.min(0.9,aSpot*2)})` : `rgba(0,200,90,${Math.min(0.9,aSpot*2)})`;
+      // Зелёный — поддержка
+      ctx.fillStyle = isSpot
+        ? `rgba(80,210,140,${alpha})`
+        : `rgba(0,160,70,${alpha})`;
+      ctx.fillRect(xFrom, y1, rectW, rh);
+      // Верхняя граница — уровень поддержки
+      ctx.strokeStyle = isSpot
+        ? `rgba(60,210,130,${Math.min(0.95,alpha*2.5)})`
+        : `rgba(0,200,80,${Math.min(0.95,alpha*2.5)})`;
       ctx.lineWidth = isSpot ? 1 : 2;
-      ctx.beginPath(); ctx.moveTo(xStart,y1); ctx.lineTo(xStart+rectW,y1); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(xFrom,y1); ctx.lineTo(xTo,y1); ctx.stroke();
     }
-    if(rh > 18){
-      ctx.font = 'bold 8px JetBrains Mono,monospace';
-      ctx.fillStyle = isAsk ? 'rgba(255,230,230,0.9)' : 'rgba(210,255,230,0.9)';
-      ctx.textAlign = 'center';
-      ctx.fillText(volStr, xStart+rectW/2, y1+rh/2+3);
+
+    // Разделитель на самом прямоугольнике
+    ctx.strokeStyle='rgba(255,255,255,0.25)';
+    ctx.lineWidth=1; ctx.setLineDash([]);
+    ctx.beginPath(); ctx.moveTo(xMid,y1); ctx.lineTo(xMid,y1+rh); ctx.stroke();
+
+    // Объём внутри если высота позволяет
+    if(rh > 16){
+      ctx.font='bold 8px JetBrains Mono,monospace';
+      ctx.fillStyle=isAsk?'rgba(255,230,230,0.95)':'rgba(210,255,225,0.95)';
+      ctx.textAlign='center';
+      ctx.fillText(volStr, xFrom+rectW/2, y1+rh/2+3);
     }
     ctx.restore();
   }
 
-  // ASK (красные): спот слева, фьюч справа
-  drawHalf(sAsk, xLeft,  halfW, true,  true);
-  drawHalf(fAsk, xRight, halfW, true,  false);
+  // ASK: СПОТ слева, ФЬЮЧ справа
+  drawRect(sAsk, pad.l, xMid, true,  true);
+  drawRect(fAsk, xMid,  xEnd, true,  false);
 
-  // BID (зелёные): спот слева, фьюч справа
-  drawHalf(sBid, xLeft,  halfW, false, true);
-  drawHalf(fBid, xRight, halfW, false, false);
+  // BID: СПОТ слева, ФЬЮЧ справа
+  drawRect(sBid, pad.l, xMid, false, true);
+  drawRect(fBid, xMid,  xEnd, false, false);
 }
-// ─────────────────────────────────────────────────────────────────────────────
 
 function drawUserObjects(){
   if(!CM||!CM.rng) return;
